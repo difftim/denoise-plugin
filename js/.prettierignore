@@ -1,0 +1,8 @@
+.github/
+dist/
+docs/
+node_modules/
+protocol/
+src/proto/
+yarn.lock
+pnpm-lock.yaml
