@@ -83,46 +83,42 @@ class DenoiserWorklet extends AudioWorkletProcessor {
         this._inputQueue.push(input, 1, false, OPERATION_NONE)
 
         if (this._inputQueue.framesAvailable >= RNNOISE_SAMPLE_LENGTH) {
-            // single
-            this._inputQueue.pull(
-                this._inputQueue.getChannelData(0),
-                SHIFT_16_BIT_NR,
-                true,
-                OPERATION_MULTIPLY,
-            )
+            if (this._shouldDenoise) {
+                // single
+                this._inputQueue.pull(
+                    this._inputQueue.getChannelData(0),
+                    SHIFT_16_BIT_NR,
+                    true,
+                    OPERATION_MULTIPLY,
+                )
+                // single
+                /*const vadScore = */ this._rnWasmInterface._rnnoise_process_frame(
+                    this._rnContext,
+                    this._outputQueue.getHeapAddress(),
+                    this._inputQueue.getHeapAddress(),
+                    this._debugLogs ? 1 : 0,
+                )
 
-            // single
-            /*const vadScore = */ this._rnWasmInterface._rnnoise_process_frame(
-                this._rnContext,
-                this._outputQueue.getHeapAddress(),
-                this._inputQueue.getHeapAddress(),
-                this._debugLogs ? 1 : 0,
-            )
+                // if (this._debugLogs) {
+                //     console.log("DenoiserWorklet.process vad:", vadScore)
+                // }
 
-            // if (this._debugLogs) {
-            //     console.log("DenoiserWorklet.process vad:", vadScore)
-            // }
-
-            // single
-            this._outputQueue.push(
-                this._outputQueue.getChannelData(0),
-                SHIFT_16_BIT_NR,
-                true,
-                OPERATION_DIVIDE,
-            )
+                // single
+                this._outputQueue.push(
+                    this._outputQueue.getChannelData(0),
+                    SHIFT_16_BIT_NR,
+                    true,
+                    OPERATION_DIVIDE,
+                )
+            } else {
+                // copy org data
+                this._inputQueue.pull(this._inputQueue.getChannelData(0), 1, true, OPERATION_NONE)
+                this._outputQueue.push(this._inputQueue.getChannelData(0), 1, true, OPERATION_NONE)
+            }
         }
 
-        if (this._shouldDenoise) {
-            if (this._outputQueue.framesAvailable >= output[0].length) {
-                this._outputQueue.pull(output, 1, false, OPERATION_NONE)
-            }
-        } else {
-            const sourceLength = input[0].length
-            for (let i = 0; i < sourceLength; ++i) {
-                for (let channel = 0; channel < this._numberOfChannels; ++channel) {
-                    output[channel][i] = input[channel][i]
-                }
-            }
+        if (this._outputQueue.framesAvailable >= output[0].length) {
+            this._outputQueue.pull(output, 1, false, OPERATION_NONE)
         }
 
         return true
