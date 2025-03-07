@@ -21,3 +21,4 @@ node_modules
 *.app
 .vscode
 .DS_Store
+.npmrc
