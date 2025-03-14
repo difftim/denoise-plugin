@@ -8,6 +8,8 @@ const DenoiserWorkletCode = process.env.DENOISER_WORKLET
 export class DenoiseTrackProcessor
     implements TrackProcessor<Track.Kind.Audio, AudioProcessorOptions>
 {
+    static #hasLoadWorkModule: boolean = false
+
     readonly name = "denoise-filter"
     processedTrack?: MediaStreamTrack | undefined
     private audioOpts?: AudioProcessorOptions | undefined
@@ -24,27 +26,36 @@ export class DenoiseTrackProcessor
         return true
     }
 
-    async init(opts: AudioProcessorOptions) {
+    async init(opts: AudioProcessorOptions): Promise<void> {
         if (this.filterOpts?.debugLogs) {
             console.log("DenoiseTrackProcessor.init", opts)
         }
         await this._initInternal(opts)
     }
 
-    async restart(opts: AudioProcessorOptions) {
+    async restart(opts: AudioProcessorOptions): Promise<void> {
+        // restart with empty audio context
+        opts.audioContext = opts.audioContext ?? this.audioOpts?.audioContext
+
         if (this.filterOpts?.debugLogs) {
             console.log("DenoiseTrackProcessor.restart", opts)
         }
         await this._initInternal(opts)
     }
 
-    async onPublish(room: Room) {
+    async onPublish(room: Room): Promise<void> {
         if (this.filterOpts?.debugLogs) {
             console.log("DenoiseTrackProcessor.onPublish", room)
         }
     }
 
-    async setEnabled(enable: boolean) {
+    async onUnpublish(): Promise<void> {
+        if (this.filterOpts?.debugLogs) {
+            console.log("DenoiseTrackProcessor.onUnpublish")
+        }
+    }
+
+    async setEnabled(enable: boolean): Promise<void> {
         if (this.filterOpts?.debugLogs) {
             console.log("DenoiseTrackProcessor.setEnabled", enable)
         }
@@ -55,7 +66,7 @@ export class DenoiseTrackProcessor
         }
     }
 
-    async isEnabled() {
+    async isEnabled(): Promise<boolean> {
         if (this.denoiseNode) {
             return this.enabled
         } else {
@@ -63,13 +74,13 @@ export class DenoiseTrackProcessor
         }
     }
 
-    async destroy() {
+    async destroy(): Promise<void> {
         if (this.filterOpts?.debugLogs) {
             console.log("DenoiseTrackProcessor.destroy")
         }
     }
 
-    async _initInternal(opts: AudioProcessorOptions) {
+    async _initInternal(opts: AudioProcessorOptions): Promise<void> {
         if (!opts || !opts.audioContext || !opts.track || !DenoiserWorkletCode) {
             throw new Error("audioContext and track are required")
         }
@@ -78,16 +89,21 @@ export class DenoiseTrackProcessor
 
         this.audioOpts = opts
 
-        console.log("DenoiserWorkletCode:", DenoiserWorkletCode.length)
-        const blob = new Blob([DenoiserWorkletCode], {
-            type: "application/javascript",
-        })
-        await this.audioOpts.audioContext.audioWorklet.addModule(URL.createObjectURL(blob))
+        if (DenoiseTrackProcessor.#hasLoadWorkModule === false) {
+            console.log("DenoiserWorkletCode:", DenoiserWorkletCode.length)
+            const blob = new Blob([DenoiserWorkletCode], {
+                type: "application/javascript",
+            })
+            await this.audioOpts.audioContext.audioWorklet.addModule(URL.createObjectURL(blob))
+
+            DenoiseTrackProcessor.#hasLoadWorkModule = true
+        }
 
         // process node
         this.denoiseNode = new AudioWorkletNode(this.audioOpts.audioContext, "DenoiserWorklet", {
             processorOptions: {
                 debugLogs: this.filterOpts?.debugLogs,
+                vadLogs: this.filterOpts?.vadLogs,
             },
         })
 
@@ -107,11 +123,11 @@ export class DenoiseTrackProcessor
     }
 
     _closeInternal() {
-        if (this.audioOpts) {
-            this.denoiseNode?.disconnect()
-            this.orgSourceNode?.disconnect()
-            this.denoiseNode = undefined
-            this.orgSourceNode = undefined
-        }
+        this.denoiseNode?.port.postMessage({ message: "DESTORY" })
+        this.denoiseNode?.disconnect()
+        this.orgSourceNode?.disconnect()
+        this.denoiseNode = undefined
+        this.orgSourceNode = undefined
+        this.processedTrack = undefined
     }
 }

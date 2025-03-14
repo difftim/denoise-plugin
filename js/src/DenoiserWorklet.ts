@@ -30,6 +30,7 @@ class DenoiserWorklet extends AudioWorkletProcessor {
     private _outputQueue: FreeQueue
     private _destroyed: boolean = false
     private _debugLogs: boolean = false
+    private _vadLogs: boolean = false
     private _shouldDenoise: boolean = true
     private _numberOfChannels: number = 0
 
@@ -37,6 +38,7 @@ class DenoiserWorklet extends AudioWorkletProcessor {
         super()
 
         this._debugLogs = options.processorOptions?.debugLogs ?? false
+        this._vadLogs = options.processorOptions?.vadLogs ?? false
         this._numberOfChannels = options.processorOptions?.numberOfChannels ?? CHANNEL_COUNT
 
         try {
@@ -59,6 +61,13 @@ class DenoiserWorklet extends AudioWorkletProcessor {
             )
 
             this._rnContext = this._rnWasmInterface._rnnoise_create()
+
+            console.log(
+                "DenoiserWorklet.constructor options:",
+                options,
+                ", Context:",
+                this._rnContext,
+            )
         } catch (error) {
             if (this._debugLogs) {
                 console.error("DenoiserWorklet.constructor error", error)
@@ -72,6 +81,10 @@ class DenoiserWorklet extends AudioWorkletProcessor {
     }
 
     process(inputs: Float32Array[][], outputs: Float32Array[][]) {
+        if (this._destroyed) {
+            return true
+        }
+
         const input = inputs[0]
         const output = outputs[0]
 
@@ -96,7 +109,7 @@ class DenoiserWorklet extends AudioWorkletProcessor {
                     this._rnContext,
                     this._outputQueue.getHeapAddress(),
                     this._inputQueue.getHeapAddress(),
-                    this._debugLogs ? 1 : 0,
+                    this._debugLogs && this._vadLogs ? 1 : 0,
                 )
 
                 // if (this._debugLogs) {
@@ -153,6 +166,11 @@ class DenoiserWorklet extends AudioWorkletProcessor {
                 if (this._debugLogs) {
                     console.log("DenoiserWorklet.SET_ENABLED: ", this._shouldDenoise)
                 }
+            } else if (event.data.message === "DESTORY") {
+                if (this._debugLogs) {
+                    console.log("DenoiserWorklet.DESTORY")
+                }
+                this.destroy()
             }
         }
     }
