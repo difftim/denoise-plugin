@@ -3,6 +3,7 @@ import type { AudioProcessorOptions, Room, TrackProcessor } from "livekit-client
 import { DenoiseOptions } from "./options";
 export type DenoiseFilterOptions = DenoiseOptions;
 export declare class DenoiseTrackProcessor implements TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> {
+    #private;
     readonly name = "denoise-filter";
     processedTrack?: MediaStreamTrack | undefined;
     private audioOpts?;
@@ -15,9 +16,10 @@ export declare class DenoiseTrackProcessor implements TrackProcessor<Track.Kind.
     init(opts: AudioProcessorOptions): Promise<void>;
     restart(opts: AudioProcessorOptions): Promise<void>;
     onPublish(room: Room): Promise<void>;
+    onUnpublish(): Promise<void>;
     setEnabled(enable: boolean): Promise<void>;
     isEnabled(): Promise<boolean>;
     destroy(): Promise<void>;
-    _initInternal(opts: AudioProcessorOptions): Promise<void>;
+    _initInternal(opts: AudioProcessorOptions, restart: boolean): Promise<void>;
     _closeInternal(): void;
 }

@@ -2,7 +2,7 @@
 
 set -e
 
-export OPTIMIZE="-Os"
+export OPTIMIZE=""
 export LDFLAGS=${OPTIMIZE}
 export CFLAGS=${OPTIMIZE}
 export CXXFLAGS=${OPTIMIZE}
@@ -36,8 +36,9 @@ echo "============================================="
     -g2 \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s MALLOC=emmalloc \
+    -s MAXIMUM_MEMORY=4GB \
     -s MODULARIZE=1 \
-    -s ENVIRONMENT="web,worker" \
+    -s ENVIRONMENT="web,worker,shell" \
     -s EXPORT_ES6=1 \
     -s WASM_ASYNC_COMPILATION=0 \
     -s SINGLE_FILE=1 \

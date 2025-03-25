@@ -1,0 +1,8 @@
+{
+    global:
+        rnnoise_create;
+        rnnoise_process_frame;
+        rnnoise_destroy;
+    local:
+        *;
+};

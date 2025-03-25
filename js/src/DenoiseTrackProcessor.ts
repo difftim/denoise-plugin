@@ -30,7 +30,7 @@ export class DenoiseTrackProcessor
         if (this.filterOpts?.debugLogs) {
             console.log("DenoiseTrackProcessor.init", opts)
         }
-        await this._initInternal(opts)
+        await this._initInternal(opts, false)
     }
 
     async restart(opts: AudioProcessorOptions): Promise<void> {
@@ -40,7 +40,7 @@ export class DenoiseTrackProcessor
         if (this.filterOpts?.debugLogs) {
             console.log("DenoiseTrackProcessor.restart", opts)
         }
-        await this._initInternal(opts)
+        await this._initInternal(opts, true)
     }
 
     async onPublish(room: Room): Promise<void> {
@@ -80,12 +80,14 @@ export class DenoiseTrackProcessor
         }
     }
 
-    async _initInternal(opts: AudioProcessorOptions): Promise<void> {
+    async _initInternal(opts: AudioProcessorOptions, restart: boolean): Promise<void> {
         if (!opts || !opts.audioContext || !opts.track || !DenoiserWorkletCode) {
             throw new Error("audioContext and track are required")
         }
 
-        this._closeInternal()
+        if (restart) {
+            this._closeInternal()
+        }
 
         this.audioOpts = opts
 

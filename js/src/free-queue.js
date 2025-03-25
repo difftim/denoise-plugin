@@ -181,6 +181,10 @@ class FreeQueue {
      * Frees the allocated memory space in the WASM heap.
      */
     free() {
+        if (!this._isInitialized) {
+            return
+        }
+
         this._isInitialized = false
         this._module._free(this._dataPtr)
         this._channelData = null

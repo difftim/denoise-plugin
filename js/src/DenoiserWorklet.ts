@@ -13,8 +13,8 @@ interface IRnnoiseModule extends EmscriptenModule {
     _rnnoise_destroy: (context: number) => void
     _rnnoise_process_frame: (
         context: number,
-        input: number,
         output: number,
+        input: number,
         debugLogs: number,
     ) => number
 }
