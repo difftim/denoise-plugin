@@ -11,12 +11,7 @@ const PROCESS_CHANNEL_COUNT = 1
 interface IRnnoiseModule extends EmscriptenModule {
     _rnnoise_create: () => number
     _rnnoise_destroy: (context: number) => void
-    _rnnoise_process_frame: (
-        context: number,
-        output: number,
-        input: number,
-        debugLogs: number,
-    ) => number
+    _rnnoise_process_frame: (context: number, output: number, input: number) => number
 }
 
 class DenoiserWorklet extends AudioWorkletProcessor {
@@ -105,16 +100,15 @@ class DenoiserWorklet extends AudioWorkletProcessor {
                     OPERATION_MULTIPLY,
                 )
                 // single
-                /*const vadScore = */ this._rnWasmInterface._rnnoise_process_frame(
+                const vadScore = this._rnWasmInterface._rnnoise_process_frame(
                     this._rnContext,
                     this._outputQueue.getHeapAddress(),
                     this._inputQueue.getHeapAddress(),
-                    this._debugLogs && this._vadLogs ? 1 : 0,
                 )
 
-                // if (this._debugLogs) {
-                //     console.log("DenoiserWorklet.process vad:", vadScore)
-                // }
+                if (this._debugLogs && this._vadLogs) {
+                    console.log("DenoiserWorklet.process vad:", vadScore)
+                }
 
                 // single
                 this._outputQueue.push(

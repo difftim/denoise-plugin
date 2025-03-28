@@ -454,7 +454,7 @@ void rnn_pitch_filter(kiss_fft_cpx *X, const kiss_fft_cpx *P, const float *Ex, c
   }
 }
 
-float rnnoise_process_frame(DenoiseState *st, float *out, const float *in, int debugLogs) {
+float rnnoise_process_frame(DenoiseState *st, float *out, const float *in) {
   int i;
   kiss_fft_cpx X[FREQ_SIZE];
   kiss_fft_cpx P[FREQ_SIZE];
@@ -500,11 +500,6 @@ float rnnoise_process_frame(DenoiseState *st, float *out, const float *in, int d
   RNN_COPY(st->delayed_Ex, Ex, NB_BANDS);
   RNN_COPY(st->delayed_Ep, Ep, NB_BANDS);
   RNN_COPY(st->delayed_Exp, Exp, NB_BANDS);
-
-  if (debugLogs) {
-    fprintf(stdout, "DenoiserWorklet.process vad:%f\n", vad_prob);
-  }
-
   return vad_prob;
 }
 
