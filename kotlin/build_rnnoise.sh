@@ -89,8 +89,8 @@ for ((i=0; i<${#ARCHS[@]}; i++)); do
     echo "Building for $ABI... Done"
     echo "============================"
 
-    rm -rf $BUILD_DIR
     git clean -f -d ../../rnnoise
+    rm -rf $BUILD_DIR
 
     cd "$SCRIPT_DIR"
 done
