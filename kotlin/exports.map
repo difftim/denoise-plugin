@@ -1,8 +1,8 @@
 {
     global:
-        rnnoise_create;
-        rnnoise_process_frame;
-        rnnoise_destroy;
+        Java_org_difft_android_libraries_DenoisePluginAudioProcessor_create;
+        Java_org_difft_android_libraries_DenoisePluginAudioProcessor_destroy;
+        Java_org_difft_android_libraries_DenoisePluginAudioProcessor_processFrame;
     local:
         *;
 };

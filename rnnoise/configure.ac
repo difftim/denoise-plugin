@@ -65,6 +65,18 @@ case $host in
 esac
 AM_CONDITIONAL(OP_WIN32, test "$host_mingw" = "true")
 
+# 检测是否为 Android 平台
+AC_ARG_ENABLE([android],
+  AS_HELP_STRING([--enable-android], [Enable Android-specific build]),,
+  enable_android=no)
+
+AS_IF([test "$enable_android" = "yes"], [
+  AC_DEFINE([ANDROID_BUILD], [1], [Enable Android-specific build])
+  AM_CONDITIONAL([ANDROID_BUILD], [true])
+], [
+  AM_CONDITIONAL([ANDROID_BUILD], [false])
+])
+
 AC_ARG_ENABLE([assertions],
   AS_HELP_STRING([--enable-assertions], [Enable assertions in code]),,
   enable_assertions=no)
@@ -112,6 +124,9 @@ AC_SUBST([lrintf_lib])
 CC_ATTRIBUTE_VISIBILITY([default], [
   CC_FLAG_VISIBILITY([CFLAGS="${CFLAGS} -fvisibility=hidden"])
 ])
+
+# 检测 C++ 编译器
+# AC_PROG_CXX
 
 dnl Check for doxygen
 AC_ARG_ENABLE([doc],

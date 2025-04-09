@@ -1,6 +1,13 @@
 ACLOCAL_AMFLAGS = -I m4
 
+AUTOMAKE_OPTIONS = foreign subdir-objects
+
 AM_CFLAGS = -I$(top_srcdir)/include -I$(top_srcdir)/src $(DEPS_CFLAGS)
+
+# 如果是 Android 平台，确保 rnnoise_jni.c 的头文件路径正确
+# if ANDROID_BUILD
+# AM_CXXFLAGS = -I$(top_srcdir)/include
+# endif
 
 dist_doc_DATA = COPYING AUTHORS README
 
@@ -47,6 +54,11 @@ X86_RTCD = src/x86/x86_dnn_map.c \
 
 if RNN_ENABLE_X86_RTCD
 RNNOISE_SOURCES += $(X86_RTCD) $(RNNOISE_SOURCES_SSE4_1) $(RNNOISE_SOURCES_AVX2)
+endif
+
+# 添加对 Android 平台的判断
+if ANDROID_BUILD
+RNNOISE_SOURCES += src/rnnoise_jni.c
 endif
 
 librnnoise_la_SOURCES = $(RNNOISE_SOURCES)

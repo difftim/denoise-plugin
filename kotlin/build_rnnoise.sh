@@ -15,18 +15,21 @@ else
     CPU_CORES=$(sysctl -n hw.ncpu)
 fi
 
+ENABLE_DEBUG=0
+
 # 目标架构配置
 ARCHS=(
-    "armv7a-linux-androideabi"
     "aarch64-linux-android"
+    "armv7a-linux-androideabi"
     "i686-linux-android"
     "x86_64-linux-android"
 )
 ABIS=(
-    "armeabi-v7a"
     "arm64-v8a"
+    "armeabi-v7a"
     "x86"
-    "x86_64")
+    "x86_64"
+)
 CONFIGURE_FLAGS=(
     ""
     ""
@@ -64,22 +67,27 @@ for ((i=0; i<${#ARCHS[@]}; i++)); do
     export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
     export STRIP=$TOOLCHAIN/bin/llvm-strip
 
-    OPT_FLAGS="-O3"
-    export LDFLAGS=${OPT_FLAGS}
-    export CFLAGS=${OPT_FLAGS}
-    export CXXFLAGS=${OPT_FLAGS}
+    OPT_FLAGS=""
+    if [ $ENABLE_DEBUG -eq 1 ]; then
+        OPT_FLAGS="-g -O0"
+    else
+        OPT_FLAGS="-O3"
+    fi
+    export LDFLAGS="${OPT_FLAGS}"
+    export CFLAGS="${OPT_FLAGS}"
+    export CXXFLAGS="${OPT_FLAGS}"
 
     # 清理
-    git clean -f -d ../../rnnoise
+    #git clean -f -d ../../rnnoise
 
     # 配置
     ../../rnnoise/autogen.sh
-    CONFIGURE_PARAMS="CFLAGS=${OPT_FLAGS} --host=$TARGET --with-sysroot=$SYSROOT --disable-static --enable-shared --disable-examples --disable-doc ${CONFIGURE_FLAGS[i]}"
-    echo "Running configure with: .../../rnnoise/configure $CONFIGURE_PARAMS" 
-    ../../rnnoise/configure $CONFIGURE_PARAMS
+    CONFIGURE_PARAMS="--host=$TARGET --with-sysroot=$SYSROOT --disable-static --enable-shared --disable-examples --disable-doc ${CONFIGURE_FLAGS[i]} --enable-android"
+    echo "Running configure with: ../../rnnoise/configure $CONFIGURE_PARAMS CFLAGS=$CFLAGS LDFLAGS=$LDFLAGS"
+    ../../rnnoise/configure $CONFIGURE_PARAMS CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS"
 
     # 编译
-    make CFLAGS=${OPT_FLAGS} librnnoise_la_LDFLAGS="-Wl,--version-script=$SCRIPT_DIR/exports.map" -j$CPU_CORES V=1
+    make CFLAGS='${OPT_FLAGS}' librnnoise_la_LDFLAGS="-Wl,--version-script=$SCRIPT_DIR/exports.map" -j$CPU_CORES V=1
 
     # 复制生成的 .so 动态库
     mkdir -p $OUTPUT_DIR/$ABI
@@ -89,7 +97,7 @@ for ((i=0; i<${#ARCHS[@]}; i++)); do
     echo "Building for $ABI... Done"
     echo "============================"
 
-    git clean -f -d ../../rnnoise
+    #git clean -f -d ../../rnnoise
     rm -rf $BUILD_DIR
 
     cd "$SCRIPT_DIR"
