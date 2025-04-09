@@ -4,7 +4,12 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 设置 Android NDK 路径
-ANDROID_NDK_ROOT=/Users/luke/Library/Android/sdk/ndk/28.0.13004108 # 修改为你的NDK路径
+# ANDROID_NDK_ROOT=/Users/luke/Library/Android/sdk/ndk/28.0.13004108 # 修改为你的NDK路径
+if [ -z "$ANDROID_NDK_ROOT" ]; then
+    echo "Error: ANDROID_NDK_ROOT is not set. Please set it to your Android NDK path."
+    exit 1
+fi
+
 TOOLCHAIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/darwin-x86_64
 SYSROOT=$TOOLCHAIN/sysroot
 API=21  # 设定最低 API 版本
@@ -78,7 +83,7 @@ for ((i=0; i<${#ARCHS[@]}; i++)); do
     export CXXFLAGS="${OPT_FLAGS}"
 
     # 清理
-    #git clean -f -d ../../rnnoise
+    git clean -f -d ../../rnnoise
 
     # 配置
     ../../rnnoise/autogen.sh
@@ -97,7 +102,7 @@ for ((i=0; i<${#ARCHS[@]}; i++)); do
     echo "Building for $ABI... Done"
     echo "============================"
 
-    #git clean -f -d ../../rnnoise
+    git clean -f -d ../../rnnoise
     rm -rf $BUILD_DIR
 
     cd "$SCRIPT_DIR"

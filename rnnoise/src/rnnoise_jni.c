@@ -39,21 +39,8 @@ Java_org_difft_android_libraries_DenoisePluginAudioProcessor_processFrame(JNIEnv
         return 0.0f;
     }
 
-    float *short_arr = (float *)in_arr;
-
-    float tmp[FRAME_SIZE];
-    memset(tmp, 0, FRAME_SIZE * sizeof(float));
-    for (int i = 0; i < FRAME_SIZE; i++)
-    {
-        tmp[i] = short_arr[i];
-    }
-
-    float result = rnnoise_process_frame(state, tmp, tmp);
-
-    for (int i = 0; i < FRAME_SIZE; i++)
-    {
-        short_arr[i] = tmp[i];
-    }
+    float *float_arr = (float *)in_arr;
+    float result = rnnoise_process_frame(state, float_arr, float_arr);
 
     (*env)->ReleaseByteArrayElements(env, pcm, in_arr, 0);
 
