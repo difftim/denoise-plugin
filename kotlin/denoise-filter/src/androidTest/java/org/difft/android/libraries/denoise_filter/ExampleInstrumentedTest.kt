@@ -1,12 +1,10 @@
-package org.difft.android.libraries
+package org.difft.android.libraries.denoise_filter
 
-import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
-
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
-
-import org.junit.Assert.*
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -49,7 +47,8 @@ class ExampleInstrumentedTest {
     }
 
     private fun copyResourceToFile(resourceName: String, outputDir: File): File {
-        val inputStream = InstrumentationRegistry.getInstrumentation().context.resources.assets.open(resourceName)
+        val inputStream =
+            InstrumentationRegistry.getInstrumentation().context.resources.assets.open(resourceName)
         val outputFile = File(outputDir, resourceName)
         FileOutputStream(outputFile).use { outputStream ->
             inputStream.copyTo(outputStream)

@@ -21,6 +21,7 @@ else
 fi
 
 ENABLE_DEBUG=0
+USE_LITE=1
 
 # 目标架构配置
 ARCHS=(
@@ -82,14 +83,26 @@ for ((i=0; i<${#ARCHS[@]}; i++)); do
     export CFLAGS="${OPT_FLAGS}"
     export CXXFLAGS="${OPT_FLAGS}"
 
+    RNNOISE_DIR="../../rnnoise"
+
     # 清理
-    git clean -f -d ../../rnnoise
+    git clean -f -d $RNNOISE_DIR
 
     # 配置
     ../../rnnoise/autogen.sh
+
+      # use little
+    if [[ $USE_LITE == 1 ]]; then
+        echo "Using lite mode"
+        mv $RNNOISE_DIR/src/rnnoise_data.h $RNNOISE_DIR/src/rnnoise_data_big.h
+        mv $RNNOISE_DIR/src/rnnoise_data.c $RNNOISE_DIR/src/rnnoise_data_big.c
+        mv $RNNOISE_DIR/src/rnnoise_data_little.h $RNNOISE_DIR/src/rnnoise_data.h
+        mv $RNNOISE_DIR/src/rnnoise_data_little.c $RNNOISE_DIR/src/rnnoise_data.c
+    fi
+
     CONFIGURE_PARAMS="--host=$TARGET --with-sysroot=$SYSROOT --disable-static --enable-shared --disable-examples --disable-doc ${CONFIGURE_FLAGS[i]} --enable-android"
-    echo "Running configure with: ../../rnnoise/configure $CONFIGURE_PARAMS CFLAGS=$CFLAGS LDFLAGS=$LDFLAGS"
-    ../../rnnoise/configure $CONFIGURE_PARAMS CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS"
+    echo "Running configure with: $RNNOISE_DIR/configure $CONFIGURE_PARAMS CFLAGS=$CFLAGS LDFLAGS=$LDFLAGS"
+    $RNNOISE_DIR/configure $CONFIGURE_PARAMS CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS"
 
     # 编译
     make CFLAGS='${OPT_FLAGS}' librnnoise_la_LDFLAGS="-Wl,--version-script=$SCRIPT_DIR/exports.map" -j$CPU_CORES V=1
@@ -102,7 +115,7 @@ for ((i=0; i<${#ARCHS[@]}; i++)); do
     echo "Building for $ABI... Done"
     echo "============================"
 
-    git clean -f -d ../../rnnoise
+    git clean -f -d $RNNOISE_DIR
     rm -rf $BUILD_DIR
 
     cd "$SCRIPT_DIR"

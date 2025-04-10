@@ -4,7 +4,7 @@
 
 // JNI function to create a DenoiseState
 JNIEXPORT jlong JNICALL
-Java_org_difft_android_libraries_DenoisePluginAudioProcessor_create(JNIEnv *env, jobject thizl)
+Java_org_difft_android_libraries_denoise_1filter_DenoisePluginAudioProcessor_create(JNIEnv *env, jobject thizl)
 {
     DenoiseState *state = rnnoise_create(NULL);
     return (jlong)state;
@@ -12,7 +12,7 @@ Java_org_difft_android_libraries_DenoisePluginAudioProcessor_create(JNIEnv *env,
 
 // JNI function to destroy a DenoiseState
 JNIEXPORT void JNICALL
-Java_org_difft_android_libraries_DenoisePluginAudioProcessor_destroy(JNIEnv *env, jobject thiz, jlong st)
+Java_org_difft_android_libraries_denoise_1filter_DenoisePluginAudioProcessor_destroy(JNIEnv *env, jobject thiz, jlong st)
 {
     if (st != 0)
     {
@@ -23,7 +23,7 @@ Java_org_difft_android_libraries_DenoisePluginAudioProcessor_destroy(JNIEnv *env
 
 // JNI function to process a frame of samples
 JNIEXPORT jfloat JNICALL
-Java_org_difft_android_libraries_DenoisePluginAudioProcessor_processFrame(JNIEnv *env, jobject thiz, jlong st, jbyteArray pcm)
+Java_org_difft_android_libraries_denoise_1filter_DenoisePluginAudioProcessor_processFrame(JNIEnv *env, jobject thiz, jlong st, jbyteArray pcm)
 {
     if (st == 0 || pcm == NULL)
     {

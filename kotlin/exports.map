@@ -1,8 +1,8 @@
 {
     global:
-        Java_org_difft_android_libraries_DenoisePluginAudioProcessor_create;
-        Java_org_difft_android_libraries_DenoisePluginAudioProcessor_destroy;
-        Java_org_difft_android_libraries_DenoisePluginAudioProcessor_processFrame;
+        Java_org_difft_android_libraries_denoise_1filter_DenoisePluginAudioProcessor_create;
+        Java_org_difft_android_libraries_denoise_1filter_DenoisePluginAudioProcessor_destroy;
+        Java_org_difft_android_libraries_denoise_1filter_DenoisePluginAudioProcessor_processFrame;
     local:
         *;
 };

@@ -46,7 +46,6 @@ android {
 }
 
 dependencies {
-
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
@@ -57,4 +56,28 @@ dependencies {
     implementation("org.difft.android.libraries:livekit-android:2.13.1")
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     implementation(libs.audioswitch)
+}
+
+apply(from = rootProject.file("gradle/gradle-mvn-push.gradle"))
+
+afterEvaluate {
+    publishing {
+        publications {
+            // Creates a Maven publication called "release".
+            create<MavenPublication>("release") {
+                // Applies the component for the release build variant.
+                from(components["release"])
+
+                // You can then customize attributes of the publication as shown below.
+                groupId = project.findProperty("GROUP") as String
+                artifactId = project.findProperty("POM_ARTIFACT_ID") as String
+                version = project.findProperty("VERSION_NAME") as String
+            }
+        }
+        repositories {
+            maven {
+                url = uri("~/workspace/project/AndroidRepo")
+            }
+        }
+    }
 }
