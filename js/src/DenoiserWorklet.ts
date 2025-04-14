@@ -156,6 +156,10 @@ class DenoiserWorklet extends AudioWorkletProcessor {
         this.port.onmessage = (event) => {
             if (event.data.message === "SET_ENABLED") {
                 this._shouldDenoise = event.data.enable ?? this._shouldDenoise
+                if (!this._shouldDenoise) {
+                    this._inputQueue.clear()
+                    this._outputQueue.clear()
+                }
 
                 if (this._debugLogs) {
                     console.log("DenoiserWorklet.SET_ENABLED: ", this._shouldDenoise)

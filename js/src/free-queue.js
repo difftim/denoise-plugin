@@ -310,6 +310,15 @@ class FreeQueue {
             this._framesAvailable = 0
         }
     }
+
+    clear() {
+        this._readIndex = 0
+        this._writeIndex = 0
+        this._framesAvailable = 0
+        for (let i = 0; i < this._channelCount; ++i) {
+            this._channelDataLocal[i].fill(0)
+        }
+    }
 } // class FreeQueue
 
 export {

@@ -112,6 +112,7 @@ export class FreeQueue {
      * @param  {number} operation The operation to perform: OPERATION_MULTIPLY, OPERATION_DIVIDE, or OPERATION_NONE.
      */
     pull(arraySequence: array, factor?: number, isMonoChannel?: boolean, operation?: number): void;
+    clear(): void;
 }
 export const OPERATION_NONE: 0;
 export const OPERATION_MULTIPLY: 1;

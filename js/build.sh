@@ -7,7 +7,7 @@ export LDFLAGS=${OPTIMIZE}
 export CFLAGS=${OPTIMIZE}
 export CXXFLAGS=${OPTIMIZE}
 
-USE_LITE=0
+USE_LITE=1
 
 ENTRY_POINT="rnnoise-sync.js"
 MODULE_CREATE_NAME="createRNNWasmModuleSync"

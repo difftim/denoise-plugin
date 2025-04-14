@@ -122,6 +122,10 @@ export class DenoiseTrackProcessor
         this.denoiseNode.connect(destination)
 
         this.processedTrack = destination.stream.getAudioTracks()[0]
+
+        if (this.filterOpts?.debugLogs) {
+            console.log(`DenoiseTrackProcessor.init: sourceID: ${this.audioOpts.track.id}, newTrackID: ${this.processedTrack.id}`)
+        }
     }
 
     _closeInternal() {
