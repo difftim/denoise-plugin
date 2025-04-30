@@ -4,10 +4,11 @@ AUTOMAKE_OPTIONS = foreign subdir-objects
 
 AM_CFLAGS = -I$(top_srcdir)/include -I$(top_srcdir)/src $(DEPS_CFLAGS)
 
-# 如果是 Android 平台，确保 rnnoise_jni.c 的头文件路径正确
-# if ANDROID_BUILD
-# AM_CXXFLAGS = -I$(top_srcdir)/include
-# endif
+# Add Objective-C specific flags
+if BUILD_FRAMEWORK
+AM_OBJCFLAGS = $(CFLAGS) $(AM_CFLAGS) 
+AM_LDFLAGS = $(LDFLAGS) -framework Foundation
+endif
 
 dist_doc_DATA = COPYING AUTHORS README
 
@@ -61,10 +62,15 @@ if ANDROID_BUILD
 RNNOISE_SOURCES += src/rnnoise_jni.c
 endif
 
+# Add Objective-C wrapper source file conditionally
+if BUILD_FRAMEWORK
+RNNOISE_SOURCES += src/RNNoiseObjC.m
+endif
+
 librnnoise_la_SOURCES = $(RNNOISE_SOURCES)
 librnnoise_la_LIBADD = $(DEPS_LIBS) $(lrintf_lib) $(LIBM)
 librnnoise_la_LDFLAGS = -no-undefined \
- -version-info @OP_LT_CURRENT@:@OP_LT_REVISION@:@OP_LT_AGE@
+ -version-info @OP_LT_CURRENT@:@OP_LT_REVISION@:@OP_LT_AGE@ $(AM_LDFLAGS)
 
 noinst_PROGRAMS = dump_features dump_weights_blob
 if OP_ENABLE_EXAMPLES
@@ -179,4 +185,34 @@ $(SSE4_1_OBJ): CFLAGS += $(OPUS_X86_SSE4_1_CFLAGS)
 
 AVX2_OBJ = $(RNNOISE_SOURCES_AVX2:.c=.lo)
 $(AVX2_OBJ): CFLAGS += $(OPUS_X86_AVX2_CFLAGS)
+endif
+
+# Add Objective-C wrapper source file conditionally
+if BUILD_FRAMEWORK
+FRAMEWORK_NAME = RNNoise
+FRAMEWORK_DIR = $(builddir)/$(FRAMEWORK_NAME).framework
+FRAMEWORK_HEADERS_DIR = $(FRAMEWORK_DIR)/Headers
+FRAMEWORK_MODULES_DIR = $(FRAMEWORK_DIR)/Modules
+
+# Framework build rule
+framework: $(lib_LTLIBRARIES)
+	@echo "Building framework: $(FRAMEWORK_NAME)"
+	mkdir -p $(FRAMEWORK_HEADERS_DIR)
+	mkdir -p $(FRAMEWORK_MODULES_DIR)
+	cp $(abs_top_srcdir)/include/RNNoiseObjC.h $(FRAMEWORK_HEADERS_DIR)
+	cp $(abs_top_builddir)/.libs/librnnoise.dylib $(FRAMEWORK_DIR)/$(FRAMEWORK_NAME)
+	cp $(abs_top_srcdir)/Info.plist $(FRAMEWORK_DIR)/Info.plist
+	plutil -convert binary1 $(FRAMEWORK_DIR)/Info.plist
+	install_name_tool -id @rpath/$(FRAMEWORK_NAME).framework/$(FRAMEWORK_NAME) $(FRAMEWORK_DIR)/$(FRAMEWORK_NAME)
+	echo "framework module $(FRAMEWORK_NAME) {" > $(FRAMEWORK_MODULES_DIR)/module.modulemap
+	echo "    umbrella header \"RNNoiseObjC.h\"" >> $(FRAMEWORK_MODULES_DIR)/module.modulemap
+	echo "    export *" >> $(FRAMEWORK_MODULES_DIR)/module.modulemap
+	echo "    module * { export * }" >> $(FRAMEWORK_MODULES_DIR)/module.modulemap
+	echo "}" >> $(FRAMEWORK_MODULES_DIR)/module.modulemap
+	@echo "✅ Framework built at $(FRAMEWORK_DIR)"
+endif
+
+# Add framework target to the build process
+if BUILD_FRAMEWORK
+all-local: framework
 endif

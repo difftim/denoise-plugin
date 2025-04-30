@@ -143,6 +143,19 @@ AS_IF([test "$enable_doc" = "yes"], [
 
 AM_CONDITIONAL([HAVE_DOXYGEN], [test "$HAVE_DOXYGEN" = "yes"])
 
+# Add an option to enable framework compilation
+AC_ARG_ENABLE([framework],
+    [AS_HELP_STRING([--enable-framework], [Enable building as a framework])],
+    [enable_framework=$enableval], [enable_framework=no])
+
+AM_CONDITIONAL([BUILD_FRAMEWORK], [test "x$enable_framework" = "xyes"])
+
+# Export the framework flag for Makefile
+if test "x$enable_framework" = "xyes"; then
+    AC_DEFINE([ENABLE_FRAMEWORK], [1], [Enable building as a framework])
+    AC_PROG_OBJC # Check for Objective-C compiler only if framework is enabled
+fi
+
 AC_CONFIG_FILES([
   Makefile
   rnnoise.pc
