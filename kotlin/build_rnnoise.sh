@@ -3,6 +3,9 @@
 # 获取当前脚本所在目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# RNNoise 源码目录
+RNNOISE_DIR="$(cd "$SCRIPT_DIR/../rnnoise" && pwd)"
+
 # 设置 Android NDK 路径
 # ANDROID_NDK_ROOT=/Users/luke/Library/Android/sdk/ndk/28.0.13004108 # 修改为你的NDK路径
 if [ -z "$ANDROID_NDK_ROOT" ]; then
@@ -83,10 +86,10 @@ for ((i=0; i<${#ARCHS[@]}; i++)); do
     export CFLAGS="${OPT_FLAGS}"
     export CXXFLAGS="${OPT_FLAGS}"
 
-    RNNOISE_DIR="../../rnnoise"
-
     # 清理
+    cd $RNNOISE_DIR
     git clean -f -d $RNNOISE_DIR
+    cd $BUILD_DIR
 
     # 配置
     ../../rnnoise/autogen.sh
@@ -115,10 +118,13 @@ for ((i=0; i<${#ARCHS[@]}; i++)); do
     echo "Building for $ABI... Done"
     echo "============================"
 
+    cd $RNNOISE_DIR
     git clean -f -d $RNNOISE_DIR
-    rm -rf $BUILD_DIR
+    cd $BUILD_DIR
 
     cd "$SCRIPT_DIR"
+    rm -rf $BUILD_DIR
+
 done
 
 echo "============================"

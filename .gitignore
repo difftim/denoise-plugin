@@ -22,4 +22,4 @@ node_modules
 .vscode
 .DS_Store
 .npmrc
-swift/libs
+libs
