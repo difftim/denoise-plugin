@@ -5,7 +5,7 @@
     <key>CFBundleName</key>
     <string>RNNoise</string>
     <key>CFBundleIdentifier</key>
-    <string>chative.libs.RNNoise</string>
+    <string>TempTalk.libs.RNNoise</string>
     <key>CFBundleVersion</key>
     <string>1.0.0</string>
     <key>CFBundleShortVersionString</key>
@@ -18,6 +18,8 @@
     <array>
         <string>iPhoneOS</string>
     </array>
+    <key>MinimumOSVersion</key>
+    <string>13.0</string>
     <key>CFBundleExecutable</key>
     <string>RNNoise</string>
 </dict>

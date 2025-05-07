@@ -201,14 +201,22 @@ framework: $(lib_LTLIBRARIES)
 	mkdir -p $(FRAMEWORK_MODULES_DIR)
 	cp $(abs_top_srcdir)/include/RNNoiseObjC.h $(FRAMEWORK_HEADERS_DIR)
 	cp $(abs_top_builddir)/.libs/librnnoise.dylib $(FRAMEWORK_DIR)/$(FRAMEWORK_NAME)
-	cp $(abs_top_srcdir)/Info.plist $(FRAMEWORK_DIR)/Info.plist
+
+	if [ "$(PLATFORM)" = "ios" ] || [ "$(PLATFORM)" = "ios-simulator" ]; then \
+		cp $(abs_top_srcdir)/Info_ios.plist $(FRAMEWORK_DIR)/Info.plist; \
+	elif [ "$(PLATFORM)" = "macos" ]; then \
+		cp $(abs_top_srcdir)/Info_macos.plist $(FRAMEWORK_DIR)/Info.plist; \
+	fi
+
 	plutil -convert binary1 $(FRAMEWORK_DIR)/Info.plist
 	install_name_tool -id @rpath/$(FRAMEWORK_NAME).framework/$(FRAMEWORK_NAME) $(FRAMEWORK_DIR)/$(FRAMEWORK_NAME)
+
 	echo "framework module $(FRAMEWORK_NAME) {" > $(FRAMEWORK_MODULES_DIR)/module.modulemap
 	echo "    umbrella header \"RNNoiseObjC.h\"" >> $(FRAMEWORK_MODULES_DIR)/module.modulemap
 	echo "    export *" >> $(FRAMEWORK_MODULES_DIR)/module.modulemap
 	echo "    module * { export * }" >> $(FRAMEWORK_MODULES_DIR)/module.modulemap
 	echo "}" >> $(FRAMEWORK_MODULES_DIR)/module.modulemap
+
 	@echo "✅ Framework built at $(FRAMEWORK_DIR)"
 endif
 
