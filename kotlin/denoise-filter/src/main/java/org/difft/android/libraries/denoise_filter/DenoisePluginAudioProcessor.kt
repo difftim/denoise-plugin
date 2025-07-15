@@ -39,6 +39,8 @@ class DenoisePluginAudioProcessor /*private*/ constructor(
     @Volatile
     private var nativeContext: Long = 0
 
+    private var enable: Boolean = true
+
     override fun getName(): String {
         return "denoise-filter"
     }
@@ -63,13 +65,19 @@ class DenoisePluginAudioProcessor /*private*/ constructor(
         nativeContext = create()
     }
 
+    @Synchronized
     override fun isEnabled(): Boolean {
-        return nativeContext != 0L
+        return nativeContext != 0L && enable
+    }
+
+    @Synchronized
+    fun setEnabled(enable: Boolean) {
+        this.enable = enable
     }
 
     @Synchronized
     override fun processAudio(numBands: Int, numFrames: Int, buffer: ByteBuffer) {
-        if (nativeContext == 0L) {
+        if (nativeContext == 0L || !enable) {
             return
         }
 
