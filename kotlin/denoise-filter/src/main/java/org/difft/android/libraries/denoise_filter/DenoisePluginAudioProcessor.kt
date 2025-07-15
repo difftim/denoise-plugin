@@ -67,7 +67,7 @@ class DenoisePluginAudioProcessor /*private*/ constructor(
 
     @Synchronized
     override fun isEnabled(): Boolean {
-        return nativeContext != 0L && enable
+        return /*nativeContext != 0L && */enable
     }
 
     @Synchronized
