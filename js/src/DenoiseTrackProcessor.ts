@@ -78,6 +78,8 @@ export class DenoiseTrackProcessor
         if (this.filterOpts?.debugLogs) {
             console.log("DenoiseTrackProcessor.destroy")
         }
+
+        this._closeInternal()
     }
 
     async _initInternal(opts: AudioProcessorOptions, restart: boolean): Promise<void> {

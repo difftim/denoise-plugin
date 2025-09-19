@@ -1,7 +1,7 @@
 {
     "name": "@cc-livekit/denoise-plugin",
     "description": "A WebAssembly module implementing the RNNoise noise suppression library for web frontends.",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/difftim/denoise-plugin.git"
