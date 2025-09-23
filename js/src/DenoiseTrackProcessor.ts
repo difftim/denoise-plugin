@@ -8,7 +8,7 @@ const DenoiserWorkletCode = process.env.DENOISER_WORKLET
 export class DenoiseTrackProcessor
     implements TrackProcessor<Track.Kind.Audio, AudioProcessorOptions>
 {
-    static #hasLoadWorkModule: boolean = false
+    private static readonly loadedContexts = new WeakSet<BaseAudioContext>()
 
     readonly name = "denoise-filter"
     processedTrack?: MediaStreamTrack | undefined
@@ -92,19 +92,26 @@ export class DenoiseTrackProcessor
         }
 
         this.audioOpts = opts
+        const ctx = this.audioOpts.audioContext
 
-        if (DenoiseTrackProcessor.#hasLoadWorkModule === false) {
-            console.log("DenoiserWorkletCode:", DenoiserWorkletCode.length)
-            const blob = new Blob([DenoiserWorkletCode], {
-                type: "application/javascript",
-            })
-            await this.audioOpts.audioContext.audioWorklet.addModule(URL.createObjectURL(blob))
+        if (!DenoiseTrackProcessor.loadedContexts.has(ctx)) {
+            if (this.filterOpts?.debugLogs) {
+                console.log("DenoiserWorkletCode:", DenoiserWorkletCode.length)
+            }
 
-            DenoiseTrackProcessor.#hasLoadWorkModule = true
+            const blob = new Blob([DenoiserWorkletCode], { type: "application/javascript" })
+            const url = URL.createObjectURL(blob)
+
+            try {
+                await ctx.audioWorklet.addModule(url)
+                DenoiseTrackProcessor.loadedContexts.add(ctx)
+            } finally {
+                URL.revokeObjectURL(url)
+            }
         }
 
         // process node
-        this.denoiseNode = new AudioWorkletNode(this.audioOpts.audioContext, "DenoiserWorklet", {
+        this.denoiseNode = new AudioWorkletNode(ctx, "DenoiserWorklet", {
             processorOptions: {
                 debugLogs: this.filterOpts?.debugLogs,
                 vadLogs: this.filterOpts?.vadLogs,
@@ -112,21 +119,21 @@ export class DenoiseTrackProcessor
         })
 
         // source node
-        this.orgSourceNode = this.audioOpts.audioContext.createMediaStreamSource(
-            new MediaStream([this.audioOpts.track]),
-        )
+        this.orgSourceNode = ctx.createMediaStreamSource(new MediaStream([this.audioOpts.track]))
         // source node==>process node
         this.orgSourceNode.connect(this.denoiseNode)
 
         // destination node
-        const destination = this.audioOpts.audioContext.createMediaStreamDestination()
+        const destination = ctx.createMediaStreamDestination()
         // process node==>destination node
         this.denoiseNode.connect(destination)
 
         this.processedTrack = destination.stream.getAudioTracks()[0]
 
         if (this.filterOpts?.debugLogs) {
-            console.log(`DenoiseTrackProcessor.init: sourceID: ${this.audioOpts.track.id}, newTrackID: ${this.processedTrack.id}`)
+            console.log(
+                `DenoiseTrackProcessor.init: sourceID: ${this.audioOpts.track.id}, newTrackID: ${this.processedTrack.id}`,
+            )
         }
     }
 
