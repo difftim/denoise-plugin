@@ -13,17 +13,32 @@ const denoiserWorkletCode = fs.readFileSync(
 
 module.exports = {
     input: "src/index.ts", // 入口文件
-    output: {
-        file: "dist/index.js", // 输出文件
-        format: "umd", // 输出格式
-        name: "DenoisePlugin", // 库名称
-        sourcemap: true, // 生成 sourcemap
-    },
+    output: [
+        {
+            file: 'dist/index.js',      // ESM
+            format: 'es',
+            sourcemap: true,
+        },
+        {
+            file: 'dist/index.cjs',     // CJS
+            format: 'cjs',
+            exports: 'named',
+            sourcemap: true,
+        },
+        {
+            file: "dist/index.umd.js", // 输出文件
+            format: "umd", // 输出格式
+            name: "DenoisePlugin", // 库名称
+            sourcemap: true, // 生成 sourcemap
+        }
+    ],
     plugins: [
         resolve(),
         commonjs(),
         typescript({
             tsconfig: "tsconfig.json",
+            useTsconfigDeclarationDir: true,
+            clean: true,
         }),
         replace({
             preventAssignment: true,

@@ -1,7 +1,7 @@
 {
     "name": "@cc-livekit/denoise-plugin",
     "description": "A WebAssembly module implementing the RNNoise noise suppression library for web frontends.",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/difftim/denoise-plugin.git"
@@ -16,20 +16,21 @@
         "build:js": " npm run build:worklet && npm run build:rollup"
     },
     "files": [
-        "./dist/index.d.ts",
-        "./dist/index.js",
-        "./dist/DenoiseTrackProcessor.d.ts",
-        "./dist/options.d.ts",
-        "./README.md"
+        "dist/index.js",
+        "dist/index.cjs",
+        "dist/index.umd.js",
+        "dist/index.d.ts",
+        "dist/DenoiseTrackProcessor.d.ts",
+        "dist/options.d.ts",
+        "README.md"
     ],
     "exports": {
         ".": {
-            "types": "./dist/index.d.ts",
+             "types": "./dist/index.d.ts",
             "import": "./dist/index.js",
-            "require": "./dist/index.js",
+            "require": "./dist/index.cjs",
             "default": "./dist/index.js"
-        },
-        "./dist/index.js": "./dist/index.js"
+        }
     },
     "devDependencies": {
         "@rollup/plugin-commonjs": "^28.0.2",
