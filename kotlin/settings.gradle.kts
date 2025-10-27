@@ -22,6 +22,9 @@ dependencyResolutionManagement {
         maven {
             url = uri("https://jitpack.io")
         }
+        maven {
+            url = uri("/Users/luke/workspace/project/AndroidRepo")
+        }
     }
 }
 

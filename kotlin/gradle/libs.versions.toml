@@ -7,7 +7,7 @@ junitVersion = "1.2.1"
 espressoCore = "3.6.1"
 appcompat = "1.7.0"
 material = "1.12.0"
-audioswitch = "89582c47c9a04c62f90aa5e57251af4800a62c9a"
+livekitAndroid = "2.20.3.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -16,7 +16,7 @@ androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "j
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
-audioswitch = { module = "com.github.davidliu:audioswitch", version.ref = "audioswitch" }
+livekit-android = { module = "org.difft.android.libraries:livekit-android", version.ref = "livekitAndroid" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

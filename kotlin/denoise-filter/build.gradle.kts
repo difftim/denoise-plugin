@@ -54,9 +54,8 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 
-    implementation("org.difft.android.libraries:livekit-android:2.13.1")
+    implementation(libs.livekit.android)
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
-    implementation(libs.audioswitch)
 }
 
 apply(from = rootProject.file("gradle/gradle-mvn-push.gradle"))
