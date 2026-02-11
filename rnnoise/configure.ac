@@ -150,10 +150,13 @@ AC_ARG_ENABLE([framework],
 
 AM_CONDITIONAL([BUILD_FRAMEWORK], [test "x$enable_framework" = "xyes"])
 
+# Keep Objective-C compiler detection unconditional because conditional .m
+# sources in Makefile.am still require Automake's OBJC conditionals.
+AC_PROG_OBJC
+
 # Export the framework flag for Makefile
 if test "x$enable_framework" = "xyes"; then
     AC_DEFINE([ENABLE_FRAMEWORK], [1], [Enable building as a framework])
-    AC_PROG_OBJC # Check for Objective-C compiler only if framework is enabled
 fi
 
 AC_CONFIG_FILES([

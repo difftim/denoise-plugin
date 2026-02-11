@@ -45,7 +45,7 @@ export class DenoiseTrackProcessor
 
     async onPublish(room: Room): Promise<void> {
         if (this.filterOpts?.debugLogs) {
-            console.log("DenoiseTrackProcessor.onPublish", room)
+            console.log("DenoiseTrackProcessor.onPublish", room.name)
         }
     }
 
