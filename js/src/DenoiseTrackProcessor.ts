@@ -1,22 +1,67 @@
 import { Track } from "livekit-client"
 import type { AudioProcessorOptions, Room, TrackProcessor } from "livekit-client"
 import { DenoiseOptions } from "./options"
+import {
+    CONTROL_DESTROY_INDEX,
+    CONTROL_ENABLED_INDEX,
+    CONTROL_SIGNAL_INDEX,
+    SharedBufferPayload,
+    createSharedBufferPayload,
+} from "./sharedMemory"
+
 export type DenoiseFilterOptions = DenoiseOptions
 
-const DenoiserWorkletCode = process.env.DENOISER_WORKLET
+interface RuntimeMessage {
+    message?: string
+    error?: string
+}
 
-export class DenoiseTrackProcessor
-    implements TrackProcessor<Track.Kind.Audio, AudioProcessorOptions>
-{
+interface MainToWorkerMessage {
+    message: string
+    sampleRate?: number
+    enable?: boolean
+    sharedBuffers?: SharedBufferPayload
+}
+
+export class DenoiseTrackProcessor implements TrackProcessor<
+    Track.Kind.Audio,
+    AudioProcessorOptions
+> {
     private static readonly loadedContexts = new WeakSet<BaseAudioContext>()
+    private static readonly loadedWorkletUrls = new WeakMap<BaseAudioContext, string>()
 
     readonly name = "denoise-filter"
     processedTrack?: MediaStreamTrack | undefined
     private audioOpts?: AudioProcessorOptions | undefined
     private filterOpts?: DenoiseFilterOptions | undefined
     private denoiseNode?: AudioWorkletNode | undefined
+    private denoiseWorker?: Worker | undefined
     private orgSourceNode?: MediaStreamAudioSourceNode | undefined
     private enabled: boolean = true
+    private _sharedControlView?: Int32Array
+
+    private readonly _handleRuntimeMessage = (event: MessageEvent<RuntimeMessage>) => {
+        if (!this.filterOpts?.debugLogs) {
+            return
+        }
+
+        const payload = event.data
+        if (!payload?.message) {
+            return
+        }
+
+        const fromWorklet = payload.message.includes("WORKLET")
+        const sourceTag = fromWorklet ? "[DenoiserRuntime][Worklet]" : "[DenoiserRuntime][Worker]"
+
+        if (payload.message.endsWith("ERROR")) {
+            console.error(
+                `${sourceTag}[${payload.message}] ${payload.error ?? "Unknown runtime error"}`,
+            )
+            return
+        }
+
+        console.log(`${sourceTag}[${payload.message}]`)
+    }
 
     constructor(options?: DenoiseFilterOptions) {
         this.filterOpts = options ?? { debugLogs: false, bufferOverflowMs: 0 }
@@ -60,18 +105,16 @@ export class DenoiseTrackProcessor
             console.log("DenoiseTrackProcessor.setEnabled", enable)
         }
 
-        if (this.denoiseNode) {
-            this.enabled = enable
-            this.denoiseNode.port.postMessage({ message: "SET_ENABLED", enable })
-        }
+        this.enabled = enable
+        this._setSharedEnabled(enable)
+        this.denoiseNode?.port.postMessage({ message: "SET_ENABLED", enable })
     }
 
     async isEnabled(): Promise<boolean> {
         if (this.denoiseNode) {
             return this.enabled
-        } else {
-            return false
         }
+        return false
     }
 
     async destroy(): Promise<void> {
@@ -83,7 +126,7 @@ export class DenoiseTrackProcessor
     }
 
     async _initInternal(opts: AudioProcessorOptions, restart: boolean): Promise<void> {
-        if (!opts || !opts.audioContext || !opts.track || !DenoiserWorkletCode) {
+        if (!opts || !opts.audioContext || !opts.track) {
             throw new Error("audioContext and track are required")
         }
 
@@ -91,41 +134,88 @@ export class DenoiseTrackProcessor
             this._closeInternal()
         }
 
+        this._ensureSharedArrayBufferSupport()
+
         this.audioOpts = opts
         const ctx = this.audioOpts.audioContext
+        const workletUrl = this.filterOpts?.workletUrl
+        if (!workletUrl) {
+            throw new Error(
+                "workletUrl is required. Pass DenoiseTrackProcessor({ workletUrl, workerUrl }).",
+            )
+        }
+
+        let resolvedWorkletUrl = DenoiseTrackProcessor.loadedWorkletUrls.get(ctx)
 
         if (!DenoiseTrackProcessor.loadedContexts.has(ctx)) {
             if (this.filterOpts?.debugLogs) {
-                console.log("DenoiserWorkletCode:", DenoiserWorkletCode.length)
+                console.log("DenoiserWorkletURL:", workletUrl)
             }
-
-            const blob = new Blob([DenoiserWorkletCode], { type: "application/javascript" })
-            const url = URL.createObjectURL(blob)
 
             try {
-                await ctx.audioWorklet.addModule(url)
+                await ctx.audioWorklet.addModule(workletUrl)
                 DenoiseTrackProcessor.loadedContexts.add(ctx)
-            } finally {
-                URL.revokeObjectURL(url)
+                DenoiseTrackProcessor.loadedWorkletUrls.set(ctx, workletUrl)
+                resolvedWorkletUrl = workletUrl
+            } catch (error) {
+                throw new Error(
+                    `Failed to load denoiser worklet module: ${String(error)}. URL: ${workletUrl}`,
+                )
             }
+        } else if (!resolvedWorkletUrl) {
+            resolvedWorkletUrl = workletUrl
+            DenoiseTrackProcessor.loadedWorkletUrls.set(ctx, workletUrl)
         }
 
-        // process node
+        const workerUrl = this._resolveWorkerURL(resolvedWorkletUrl)
+
+        if (this.filterOpts?.debugLogs) {
+            console.log("DenoiserWorkerURL:", workerUrl)
+        }
+
+        try {
+            this.denoiseWorker = new Worker(workerUrl)
+            this.denoiseWorker.onmessage = this._handleRuntimeMessage
+            this.denoiseWorker.onerror = (event) => {
+                if (this.filterOpts?.debugLogs) {
+                    console.error("[DenoiserRuntime][Worker][OnError]", event)
+                }
+            }
+        } catch (error) {
+            throw new Error(`Failed to create denoiser worker: ${String(error)}. URL: ${workerUrl}`)
+        }
+
         this.denoiseNode = new AudioWorkletNode(ctx, "DenoiserWorklet", {
             processorOptions: {
                 debugLogs: this.filterOpts?.debugLogs,
-                vadLogs: this.filterOpts?.vadLogs,
+                numberOfChannels: this.audioOpts.track.getSettings().channelCount,
             },
         })
+        this.denoiseNode.port.onmessage = this._handleRuntimeMessage
 
-        // source node
+        const sharedBuffers = createSharedBufferPayload()
+        this._sharedControlView = new Int32Array(sharedBuffers.controlState)
+        this._setSharedEnabled(this.enabled)
+        Atomics.store(this._sharedControlView, CONTROL_DESTROY_INDEX, 0)
+
+        this.denoiseNode.port.postMessage({
+            message: "ATTACH_SHARED_BUFFERS",
+            sharedBuffers,
+        })
+        this.denoiseWorker.postMessage({
+            message: "ATTACH_SHARED_BUFFERS",
+            sharedBuffers,
+        } as MainToWorkerMessage)
+        this.denoiseWorker.postMessage({
+            message: "INIT",
+            sampleRate: ctx.sampleRate,
+        } as MainToWorkerMessage)
+        this.denoiseNode.port.postMessage({ message: "SET_ENABLED", enable: this.enabled })
+
         this.orgSourceNode = ctx.createMediaStreamSource(new MediaStream([this.audioOpts.track]))
-        // source node==>process node
         this.orgSourceNode.connect(this.denoiseNode)
 
-        // destination node
         const destination = ctx.createMediaStreamDestination()
-        // process node==>destination node
         this.denoiseNode.connect(destination)
 
         this.processedTrack = destination.stream.getAudioTracks()[0]
@@ -137,12 +227,93 @@ export class DenoiseTrackProcessor
         }
     }
 
+    private _ensureSharedArrayBufferSupport() {
+        if (typeof SharedArrayBuffer === "undefined") {
+            throw new Error(
+                "SharedArrayBuffer is unavailable in this context. Enable cross-origin isolation (COOP/COEP).",
+            )
+        }
+
+        if (
+            typeof globalThis.crossOriginIsolated === "boolean" &&
+            globalThis.crossOriginIsolated === false
+        ) {
+            throw new Error(
+                "SharedArrayBuffer requires cross-origin isolation. Serve with COOP: same-origin and COEP: require-corp.",
+            )
+        }
+    }
+
+    private _setSharedEnabled(enable: boolean) {
+        if (!this._sharedControlView) {
+            return
+        }
+
+        Atomics.store(this._sharedControlView, CONTROL_ENABLED_INDEX, enable ? 1 : 0)
+        Atomics.add(this._sharedControlView, CONTROL_SIGNAL_INDEX, 1)
+        Atomics.notify(this._sharedControlView, CONTROL_SIGNAL_INDEX, 1)
+    }
+
+    private _requestSharedDestroy() {
+        if (!this._sharedControlView) {
+            return
+        }
+
+        Atomics.store(this._sharedControlView, CONTROL_DESTROY_INDEX, 1)
+        Atomics.add(this._sharedControlView, CONTROL_SIGNAL_INDEX, 1)
+        Atomics.notify(this._sharedControlView, CONTROL_SIGNAL_INDEX, 1)
+    }
+
+    private _resolveWorkerURL(workletUrl: string): string {
+        if (this.filterOpts?.workerUrl) {
+            return this.filterOpts.workerUrl
+        }
+
+        const derived = this._derivePeerAssetURL(workletUrl, "DenoiserWorker.js")
+        if (derived) {
+            return derived
+        }
+
+        throw new Error(
+            "workerUrl is required when it cannot be derived from workletUrl. Pass DenoiseTrackProcessor({ workletUrl, workerUrl }).",
+        )
+    }
+
+    private _derivePeerAssetURL(sourceUrl: string, targetFileName: string): string | undefined {
+        if (!sourceUrl.includes("DenoiserWorklet.js")) {
+            return undefined
+        }
+
+        try {
+            const resolved = new URL(sourceUrl, globalThis.location?.href)
+            resolved.pathname = resolved.pathname.replace(/DenoiserWorklet\.js$/, targetFileName)
+            return resolved.toString()
+        } catch (_error) {
+            return sourceUrl.replace("DenoiserWorklet.js", targetFileName)
+        }
+    }
+
     _closeInternal() {
+        this._requestSharedDestroy()
+
         this.denoiseNode?.port.postMessage({ message: "DESTORY" })
+        if (this.denoiseNode) {
+            this.denoiseNode.port.onmessage = null
+        }
+
+        this.denoiseWorker?.postMessage({ message: "DESTROY" } as MainToWorkerMessage)
+        if (this.denoiseWorker) {
+            this.denoiseWorker.onmessage = null
+            this.denoiseWorker.onerror = null
+            this.denoiseWorker.terminate()
+        }
+
         this.denoiseNode?.disconnect()
         this.orgSourceNode?.disconnect()
         this.denoiseNode = undefined
+        this.denoiseWorker = undefined
         this.orgSourceNode = undefined
         this.processedTrack = undefined
+        this._sharedControlView = undefined
     }
 }

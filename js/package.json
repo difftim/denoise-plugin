@@ -19,6 +19,8 @@
         "build:js": " npm run build:worklet && npm run build:rollup"
     },
     "files": [
+        "dist/DenoiserWorklet.js",
+        "dist/DenoiserWorker.js",
         "dist/index.js",
         "dist/index.cjs",
         "dist/index.umd.js",

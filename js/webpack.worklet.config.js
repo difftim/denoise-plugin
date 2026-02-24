@@ -5,10 +5,13 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 export default {
-    entry: "./src/DenoiserWorklet.ts", // 入口文件
+    entry: {
+        DenoiserWorklet: "./src/DenoiserWorklet.ts",
+        DenoiserWorker: "./src/DenoiserWorker.ts",
+    },
     output: {
-        filename: "DenoiserWorklet.js", // 输出文件名
-        path: path.resolve(__dirname, "dist"), // 输出目录
+        filename: "[name].js",
+        path: path.resolve(__dirname, "dist"),
     },
     resolve: {
         extensions: [".ts", ".js"],
@@ -22,8 +25,8 @@ export default {
             },
         ],
     },
-    mode: "production", // 生产模式
+    mode: "production",
     performance: {
-        hints: false, // 关闭性能提示
+        hints: false,
     },
 }
