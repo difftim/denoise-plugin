@@ -40,6 +40,18 @@ pub unsafe fn df_create(
     Box::into_raw(df.boxed())
 }
 
+/// Create a DeepFilterNet model with the built-in default model.
+///
+/// Args:
+///     - atten_lim: Attenuation limit in dB.
+#[wasm_bindgen]
+pub unsafe fn df_create_default(atten_lim: f32) -> *mut DFState {
+    let r_params = RuntimeParams::default_with_ch(1).with_atten_lim(atten_lim);
+    let df_params = DfParams::default();
+    let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
+    Box::into_raw(Box::new(DFState(m)))
+}
+
 /// Get DeepFilterNet frame size in samples.
 #[wasm_bindgen]
 pub unsafe fn df_get_frame_length(st: *mut DFState) -> usize {
@@ -85,4 +97,13 @@ pub unsafe fn df_process_frame(st: *mut DFState, input: &[f32]) -> js_sys::Float
     let output_view = output.view_mut();
     let _lsnr = state.0.process(input, output_view).expect("Failed to process DF frame");
     js_sys::Float32Array::from(output.as_slice().unwrap())
+}
+
+/// Free a DeepFilterNet model created by df_create/df_create_default.
+#[wasm_bindgen]
+pub unsafe fn df_destroy(st: *mut DFState) {
+    if st.is_null() {
+        return
+    }
+    let _ = Box::from_raw(st);
 }

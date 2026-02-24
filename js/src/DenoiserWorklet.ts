@@ -2,6 +2,7 @@ import {
     CONTROL_DESTROY_INDEX,
     CONTROL_ENABLED_INDEX,
     CONTROL_SIGNAL_INDEX,
+    CONTROL_WORKER_READY_INDEX,
     CONTROL_WORKLET_READY_INDEX,
     SharedBufferPayload,
     SharedRingBufferView,
@@ -46,81 +47,97 @@ class DenoiserWorklet extends AudioWorkletProcessor {
     }
 
     process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
-        if (this._destroyed) {
-            return false
-        }
+        const processStartMs = this._nowMs()
+        let inputFrames = 0
+        let inputDurationMs = 0
 
-        const input = inputs[0]
-        const output = outputs[0]
-        const inputMono = input?.[0]
-
-        if (!inputMono || !output?.[0]) {
-            return true
-        }
-
-        if (
-            !this._sharedReady ||
-            !this._sharedInput ||
-            !this._sharedOutput ||
-            !this._sharedControl
-        ) {
-            this._copyMonoToOutput(inputMono, output)
-            return true
-        }
-
-        if (Atomics.load(this._sharedControl, CONTROL_DESTROY_INDEX) === 1) {
-            this.destroy()
-            return false
-        }
-
-        if (!this._shouldDenoise) {
-            this._copyMonoToOutput(inputMono, output)
-            return true
-        }
-
-        pushToSharedRing(this._sharedInput, inputMono)
-        Atomics.add(this._sharedControl, CONTROL_SIGNAL_INDEX, 1)
-        Atomics.notify(this._sharedControl, CONTROL_SIGNAL_INDEX, 1)
-
-        const pulled = pullFromSharedRing(this._sharedOutput, output[0])
-        if (pulled) {
-            for (let channel = 1; channel < output.length; channel += 1) {
-                output[channel].set(output[0])
+        try {
+            if (this._destroyed) {
+                return false
             }
 
-            this._consecutiveUnderflowBlocks = 0
-            this._underflowStreakStartMs = 0
+            const input = inputs[0]
+            const output = outputs[0]
+            const inputMono = input?.[0]
+            inputFrames = inputMono?.length ?? 0
+            inputDurationMs = this._framesToMs(inputFrames)
+
+            if (!inputMono || !output?.[0]) {
+                return true
+            }
+
+            if (
+                !this._sharedReady ||
+                !this._sharedInput ||
+                !this._sharedOutput ||
+                !this._sharedControl
+            ) {
+                this._copyMonoToOutput(inputMono, output)
+                return true
+            }
+
+            if (Atomics.load(this._sharedControl, CONTROL_DESTROY_INDEX) === 1) {
+                this.destroy()
+                return false
+            }
+
+            if (!this._shouldDenoise) {
+                this._copyMonoToOutput(inputMono, output)
+                return true
+            }
+
+            if (Atomics.load(this._sharedControl, CONTROL_WORKER_READY_INDEX) !== 1) {
+                this._resetFlowState()
+                this._copyMonoToOutput(inputMono, output)
+                return true
+            }
+
+            pushToSharedRing(this._sharedInput, inputMono)
+            Atomics.add(this._sharedControl, CONTROL_SIGNAL_INDEX, 1)
+            Atomics.notify(this._sharedControl, CONTROL_SIGNAL_INDEX, 1)
+
+            const pulled = pullFromSharedRing(this._sharedOutput, output[0])
+            if (pulled) {
+                for (let channel = 1; channel < output.length; channel += 1) {
+                    output[channel].set(output[0])
+                }
+
+                this._consecutiveUnderflowBlocks = 0
+                this._underflowStreakStartMs = 0
+                return true
+            }
+
+            this._copyMonoToOutput(inputMono, output)
+
+            if (this._startupGraceBlocksRemaining > 0) {
+                this._startupGraceBlocksRemaining -= 1
+                return true
+            }
+
+            const nowMs = this._nowMs()
+            if (this._consecutiveUnderflowBlocks === 0) {
+                this._underflowStreakStartMs = nowMs
+            }
+
+            this._consecutiveUnderflowBlocks += 1
+            const underflowDurationMs =
+                this._underflowStreakStartMs > 0 ? nowMs - this._underflowStreakStartMs : 0
+            if (
+                this._consecutiveUnderflowBlocks >= MAX_CONSECUTIVE_UNDERFLOW_BLOCKS &&
+                underflowDurationMs >= UNDERFLOW_FATAL_MIN_DURATION_MS
+            ) {
+                this._postMainMessage({
+                    message: "DENOISER_WORKER_ERROR",
+                    error: "Worker output underflow threshold exceeded",
+                })
+                this.destroy()
+                return false
+            }
+
             return true
+        } finally {
+            this._maybeLogProcessOverrun(processStartMs, inputDurationMs, inputFrames)
         }
-
-        this._copyMonoToOutput(inputMono, output)
-
-        if (this._startupGraceBlocksRemaining > 0) {
-            this._startupGraceBlocksRemaining -= 1
-            return true
-        }
-
-        const nowMs = this._nowMs()
-        if (this._consecutiveUnderflowBlocks === 0) {
-            this._underflowStreakStartMs = nowMs
-        }
-
-        this._consecutiveUnderflowBlocks += 1
-        const underflowDurationMs =
-            this._underflowStreakStartMs > 0 ? nowMs - this._underflowStreakStartMs : 0
-        if (
-            this._consecutiveUnderflowBlocks >= MAX_CONSECUTIVE_UNDERFLOW_BLOCKS &&
-            underflowDurationMs >= UNDERFLOW_FATAL_MIN_DURATION_MS
-        ) {
-            this._postMainMessage({
-                message: "DENOISER_WORKER_ERROR",
-                error: "Worker output underflow threshold exceeded",
-            })
-            this.destroy()
-            return false
-        }
-
-        return true
     }
 
     private _handleControlMessages() {
@@ -231,6 +248,37 @@ class DenoiserWorklet extends AudioWorkletProcessor {
 
     private _postMainMessage(payload: { message: string; error?: string }) {
         this.port.postMessage(payload)
+    }
+
+    private _maybeLogProcessOverrun(
+        processStartMs: number,
+        inputDurationMs: number,
+        inputFrames: number,
+    ) {
+        if (inputDurationMs <= 0) {
+            return
+        }
+
+        const elapsedMs = this._nowMs() - processStartMs
+        if (elapsedMs <= inputDurationMs) {
+            return
+        }
+
+        console.warn(
+            `[DenoiserWorklet][process] overrun elapsedMs=${elapsedMs.toFixed(3)} inputDurationMs=${inputDurationMs.toFixed(3)} inputFrames=${inputFrames}`,
+        )
+    }
+
+    private _framesToMs(frames: number): number {
+        if (!Number.isFinite(frames) || frames <= 0) {
+            return 0
+        }
+
+        const sr =
+            typeof sampleRate === "number" && Number.isFinite(sampleRate) && sampleRate > 0
+                ? sampleRate
+                : 48_000
+        return (frames / sr) * 1000
     }
 
     private _nowMs(): number {

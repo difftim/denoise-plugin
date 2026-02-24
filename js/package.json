@@ -14,9 +14,11 @@
         "lint": "publint",
         "build:dockerimage": "docker image inspect -f '.' emscripten-autotools-4.0.4 || docker build -t emscripten-autotools-4.0.4 .",
         "build:emscripten": "docker run --rm -v $(pwd)/../:/src emscripten-autotools-4.0.4 bash -x ./js/build.sh",
+        "build:deepfilter:wasm": "cd ../DeepFilterNet && ./scripts/build_wasm_package.sh",
+        "build:deepfilter:artifacts": "node ./scripts/build-deepfilter-artifacts.mjs",
         "build:worklet": "webpack --config webpack.worklet.config.js",
         "build:rollup": " rollup -c rollup.config.cjs",
-        "build:js": " npm run build:worklet && npm run build:rollup"
+        "build:js": "npm run build:deepfilter:artifacts && npm run build:worklet && npm run build:rollup"
     },
     "files": [
         "dist/DenoiserWorklet.js",

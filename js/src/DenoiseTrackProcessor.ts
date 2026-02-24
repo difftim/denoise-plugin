@@ -1,6 +1,6 @@
 import { Track } from "livekit-client"
 import type { AudioProcessorOptions, Room, TrackProcessor } from "livekit-client"
-import { DenoiseOptions } from "./options"
+import { DenoiseOptions, type DeepFilterOptions, type DenoiserEngine } from "./options"
 import {
     CONTROL_DESTROY_INDEX,
     CONTROL_ENABLED_INDEX,
@@ -11,6 +11,14 @@ import {
 
 export type DenoiseFilterOptions = DenoiseOptions
 const DEFAULT_VAD_LOG_INTERVAL_MS = 1000
+const DEFAULT_DENOISER_ENGINE: DenoiserEngine = "rnnoise"
+const DEFAULT_DF_ATTEN_LIM_DB = 100
+const DEFAULT_DF_POST_FILTER_BETA = 0
+
+interface DeepFilterRuntimeParams {
+    attenLimDb?: number
+    postFilterBeta?: number
+}
 
 interface RuntimeMessage {
     message?: string
@@ -26,6 +34,8 @@ interface MainToWorkerMessage {
     debugLogs?: boolean
     vadLogs?: boolean
     bufferOverflowMs?: number
+    engine?: DenoiserEngine
+    deepFilter?: DeepFilterOptions
     sharedBuffers?: SharedBufferPayload
 }
 
@@ -85,11 +95,23 @@ export class DenoiseTrackProcessor implements TrackProcessor<
     }
 
     constructor(options?: DenoiseFilterOptions) {
+        const deepFilterOptions: DeepFilterOptions = {
+            attenLimDb: DEFAULT_DF_ATTEN_LIM_DB,
+            postFilterBeta: DEFAULT_DF_POST_FILTER_BETA,
+            ...options?.deepFilter,
+        }
+        deepFilterOptions.attenLimDb = this._resolveDeepFilterAttenLimDb(deepFilterOptions.attenLimDb)
+        deepFilterOptions.postFilterBeta = this._resolveDeepFilterPostFilterBeta(
+            deepFilterOptions.postFilterBeta,
+        )
+
         this.filterOpts = {
             debugLogs: false,
             vadLogs: false,
             bufferOverflowMs: DEFAULT_VAD_LOG_INTERVAL_MS,
+            engine: DEFAULT_DENOISER_ENGINE,
             ...options,
+            deepFilter: deepFilterOptions,
         }
     }
 
@@ -134,6 +156,59 @@ export class DenoiseTrackProcessor implements TrackProcessor<
         this.enabled = enable
         this._setSharedEnabled(enable)
         this.denoiseNode?.port.postMessage({ message: "SET_ENABLED", enable })
+    }
+
+    async setEngine(engine: DenoiserEngine): Promise<void> {
+        if (this.filterOpts?.debugLogs) {
+            console.log("DenoiseTrackProcessor.setEngine", engine)
+        }
+
+        this._ensureFilterOptions()
+        const filterOpts = this.filterOpts
+        if (!filterOpts) {
+            return
+        }
+        if (filterOpts.engine === engine) {
+            return
+        }
+        filterOpts.engine = engine
+
+        if (!this.audioOpts) {
+            return
+        }
+
+        await this.restart({ ...this.audioOpts })
+    }
+
+    async setDeepFilterParams(params: DeepFilterRuntimeParams): Promise<void> {
+        if (this.filterOpts?.debugLogs) {
+            console.log("DenoiseTrackProcessor.setDeepFilterParams", params)
+        }
+
+        this._ensureFilterOptions()
+        const filterOpts = this.filterOpts
+        if (!filterOpts) {
+            return
+        }
+        const resolved: DeepFilterOptions = {
+            ...filterOpts.deepFilter,
+            ...params,
+            attenLimDb: this._resolveDeepFilterAttenLimDb(
+                params.attenLimDb ?? filterOpts.deepFilter?.attenLimDb,
+            ),
+            postFilterBeta: this._resolveDeepFilterPostFilterBeta(
+                params.postFilterBeta ?? filterOpts.deepFilter?.postFilterBeta,
+            ),
+        }
+        filterOpts.deepFilter = resolved
+
+        this.denoiseWorker?.postMessage({
+            message: "UPDATE_DEEPFILTER_PARAMS",
+            deepFilter: {
+                attenLimDb: resolved.attenLimDb,
+                postFilterBeta: resolved.postFilterBeta,
+            },
+        } as MainToWorkerMessage)
     }
 
     async isEnabled(): Promise<boolean> {
@@ -194,6 +269,11 @@ export class DenoiseTrackProcessor implements TrackProcessor<
         }
 
         const workerUrl = this._resolveWorkerURL(resolvedWorkletUrl)
+        const resolvedEngine = this._getResolvedEngine()
+        const resolvedDeepFilter =
+            resolvedEngine === "deepfilternet"
+                ? this._resolveDeepFilterOptions()
+                : undefined
 
         if (this.filterOpts?.debugLogs) {
             console.log("DenoiserWorkerURL:", workerUrl)
@@ -238,6 +318,8 @@ export class DenoiseTrackProcessor implements TrackProcessor<
             debugLogs: this.filterOpts?.debugLogs,
             vadLogs: this.filterOpts?.vadLogs,
             bufferOverflowMs: this._getVadLogIntervalMs(),
+            engine: resolvedEngine,
+            deepFilter: resolvedDeepFilter,
         } as MainToWorkerMessage)
         this.denoiseNode.port.postMessage({ message: "SET_ENABLED", enable: this.enabled })
 
@@ -257,7 +339,15 @@ export class DenoiseTrackProcessor implements TrackProcessor<
     }
 
     private _ensureSharedArrayBufferSupport() {
+        const userAgent = globalThis.navigator?.userAgent ?? ""
+        const isElectronRuntime = /\bElectron\/\d+/i.test(userAgent)
+
         if (typeof SharedArrayBuffer === "undefined") {
+            if (isElectronRuntime) {
+                throw new Error(
+                    "SharedArrayBuffer is unavailable in this Electron context. Configure BrowserWindow.webPreferences.enableBlinkFeatures='SharedArrayBuffer'.",
+                )
+            }
             throw new Error(
                 "SharedArrayBuffer is unavailable in this context. Enable cross-origin isolation (COOP/COEP).",
             )
@@ -265,7 +355,8 @@ export class DenoiseTrackProcessor implements TrackProcessor<
 
         if (
             typeof globalThis.crossOriginIsolated === "boolean" &&
-            globalThis.crossOriginIsolated === false
+            globalThis.crossOriginIsolated === false &&
+            !isElectronRuntime
         ) {
             throw new Error(
                 "SharedArrayBuffer requires cross-origin isolation. Serve with COOP: same-origin and COEP: require-corp.",
@@ -328,6 +419,62 @@ export class DenoiseTrackProcessor implements TrackProcessor<
             return DEFAULT_VAD_LOG_INTERVAL_MS
         }
         return interval ?? DEFAULT_VAD_LOG_INTERVAL_MS
+    }
+
+    private _getResolvedEngine(): DenoiserEngine {
+        this._ensureFilterOptions()
+        const engine = this.filterOpts?.engine
+        if (engine === "deepfilternet" || engine === "rnnoise") {
+            return engine
+        }
+        return DEFAULT_DENOISER_ENGINE
+    }
+
+    private _resolveDeepFilterOptions(): DeepFilterOptions {
+        this._ensureFilterOptions()
+        const options = this.filterOpts?.deepFilter
+        const modelUrl =
+            typeof options?.modelUrl === "string" && options.modelUrl.trim().length > 0
+                ? options.modelUrl
+                : undefined
+
+        return {
+            modelUrl,
+            attenLimDb: this._resolveDeepFilterAttenLimDb(options?.attenLimDb),
+            postFilterBeta: this._resolveDeepFilterPostFilterBeta(options?.postFilterBeta),
+        }
+    }
+
+    private _resolveDeepFilterAttenLimDb(value?: number): number {
+        if (!Number.isFinite(value)) {
+            return DEFAULT_DF_ATTEN_LIM_DB
+        }
+        return Math.abs(value ?? DEFAULT_DF_ATTEN_LIM_DB)
+    }
+
+    private _resolveDeepFilterPostFilterBeta(value?: number): number {
+        if (!Number.isFinite(value)) {
+            return DEFAULT_DF_POST_FILTER_BETA
+        }
+        return Math.max(0, value ?? DEFAULT_DF_POST_FILTER_BETA)
+    }
+
+    private _ensureFilterOptions() {
+        const existing = this.filterOpts
+        const deepFilter = {
+            ...existing?.deepFilter,
+            attenLimDb: this._resolveDeepFilterAttenLimDb(existing?.deepFilter?.attenLimDb),
+            postFilterBeta: this._resolveDeepFilterPostFilterBeta(existing?.deepFilter?.postFilterBeta),
+        }
+
+        this.filterOpts = {
+            debugLogs: false,
+            vadLogs: false,
+            bufferOverflowMs: DEFAULT_VAD_LOG_INTERVAL_MS,
+            engine: DEFAULT_DENOISER_ENGINE,
+            ...existing,
+            deepFilter,
+        }
     }
 
     _closeInternal() {

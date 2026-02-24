@@ -1,4 +1,5 @@
 import createRNNWasmModuleSync from "./dist/rnnoise-sync.js"
+import createDeepFilterWasmModuleSync from "./dist/deepfilter-sync.js"
 import {
     CONTROL_DESTROY_INDEX,
     CONTROL_ENABLED_INDEX,
@@ -21,6 +22,9 @@ const RNNOISE_SCALE = 32768
 const WAIT_TIMEOUT_MS = 50
 const MAX_BLOCKS_PER_TICK = 96
 const DEFAULT_VAD_LOG_INTERVAL_MS = 1000
+const DEFAULT_DENOISER_ENGINE: DenoiserEngine = "rnnoise"
+const DEFAULT_DF_ATTEN_LIM_DB = 100
+const DEFAULT_DF_POST_FILTER_BETA = 0
 
 interface IRnnoiseModule extends EmscriptenModule {
     _malloc: (size: number) => number
@@ -30,6 +34,22 @@ interface IRnnoiseModule extends EmscriptenModule {
     _rnnoise_process_frame: (context: number, output: number, input: number) => number
 }
 
+type DenoiserEngine = "rnnoise" | "deepfilternet"
+
+interface DeepFilterOptions {
+    jsUrl?: string
+    wasmUrl?: string
+    modelUrl?: string
+    attenLimDb?: number
+    postFilterBeta?: number
+}
+
+interface ResolvedDeepFilterOptions {
+    modelUrl?: string
+    attenLimDb: number
+    postFilterBeta: number
+}
+
 interface MainToWorkerMessage {
     message: string
     sampleRate?: number
@@ -37,6 +57,8 @@ interface MainToWorkerMessage {
     debugLogs?: boolean
     vadLogs?: boolean
     bufferOverflowMs?: number
+    engine?: DenoiserEngine
+    deepFilter?: DeepFilterOptions
     sharedBuffers?: SharedBufferPayload
     error?: string
 }
@@ -44,6 +66,17 @@ interface MainToWorkerMessage {
 interface WorkerGlobalLike {
     onmessage: ((event: MessageEvent<MainToWorkerMessage>) => void) | null
     postMessage: (message: unknown, transfer?: Transferable[]) => void
+}
+
+interface DeepFilterBindings {
+    initSync: (module: BufferSource | WebAssembly.Module) => unknown
+    df_create: (modelBytes: Uint8Array, attenLimDb: number) => number
+    df_create_default: (attenLimDb: number) => number
+    df_destroy: (state: number) => void
+    df_get_frame_length: (state: number) => number
+    df_process_frame: (state: number, input: Float32Array) => Float32Array
+    df_set_atten_lim: (state: number, limDb: number) => void
+    df_set_post_filter_beta: (state: number, beta: number) => void
 }
 
 class MonoRingBuffer {
@@ -102,6 +135,7 @@ class MonoRingBuffer {
 
 class DenoiserWorkerRuntime {
     private readonly _global: WorkerGlobalLike
+    private _messageChain: Promise<void> = Promise.resolve()
 
     private _initialized = false
     private _shouldDenoise = true
@@ -118,12 +152,22 @@ class DenoiserWorkerRuntime {
     private _sharedOutput?: SharedRingBufferView
     private _sharedControl?: Int32Array
 
+    private _engine: DenoiserEngine = DEFAULT_DENOISER_ENGINE
+    private _algorithmFrameLength = RNNOISE_FRAME
+
     private _rnWasmInterface?: IRnnoiseModule
     private _rnContext = 0
     private _rnInputPtr = 0
     private _rnOutputPtr = 0
     private _rnInputHeap?: Float32Array
     private _rnOutputHeap?: Float32Array
+
+    private _deepFilterBindings?: DeepFilterBindings
+    private _deepFilterState = 0
+    private _deepFilterOptions: ResolvedDeepFilterOptions = {
+        attenLimDb: DEFAULT_DF_ATTEN_LIM_DB,
+        postFilterBeta: DEFAULT_DF_POST_FILTER_BETA,
+    }
 
     private _processBlockLength = QUANTUM_SAMPLES
     private _processInputBlock = new Float32Array(QUANTUM_SAMPLES)
@@ -138,6 +182,17 @@ class DenoiserWorkerRuntime {
     }
 
     handleMainMessage(payload: MainToWorkerMessage) {
+        this._messageChain = this._messageChain
+            .then(async () => {
+                await this._handleMainMessage(payload)
+            })
+            .catch((error) => {
+                this._reportError(error)
+                this.destroy()
+            })
+    }
+
+    private async _handleMainMessage(payload: MainToWorkerMessage) {
         if (!payload?.message) {
             return
         }
@@ -150,11 +205,15 @@ class DenoiserWorkerRuntime {
                 break
             }
             case "INIT": {
-                this._init(payload)
+                await this._init(payload)
                 break
             }
             case "SET_ENABLED": {
                 this._setEnabled(payload.enable ?? this._shouldDenoise)
+                break
+            }
+            case "UPDATE_DEEPFILTER_PARAMS": {
+                this._updateDeepFilterParams(payload.deepFilter)
                 break
             }
             case "DESTROY": {
@@ -184,7 +243,7 @@ class DenoiserWorkerRuntime {
             )
         }
 
-        Atomics.store(this._sharedControl, CONTROL_WORKER_READY_INDEX, 1)
+        Atomics.store(this._sharedControl, CONTROL_WORKER_READY_INDEX, 0)
         Atomics.add(this._sharedControl, CONTROL_SIGNAL_INDEX, 1)
         Atomics.notify(this._sharedControl, CONTROL_SIGNAL_INDEX, 1)
 
@@ -193,7 +252,7 @@ class DenoiserWorkerRuntime {
         clearSharedRing(this._sharedOutput)
     }
 
-    private _init(payload: MainToWorkerMessage) {
+    private async _init(payload: MainToWorkerMessage) {
         if (this._initialized) {
             this._releaseRuntime(false)
         }
@@ -207,13 +266,48 @@ class DenoiserWorkerRuntime {
         this._vadLogs = payload.vadLogs ?? false
         this._vadLogIntervalMs = this._resolveVadLogIntervalMs(payload.bufferOverflowMs)
         this._lastVadLogAtMs = 0
+        this._engine = this._resolveEngine(payload.engine)
 
         if (this._sampleRate !== REQUIRED_SAMPLE_RATE) {
             throw new Error(
-                `Unsupported sampleRate ${this._sampleRate}. RNNoise worker currently requires ${REQUIRED_SAMPLE_RATE}.`,
+                `Unsupported sampleRate ${this._sampleRate}. Worker currently requires ${REQUIRED_SAMPLE_RATE}.`,
             )
         }
 
+        this._destroyRequested = false
+        await this._initializeBackend(payload)
+        this._resetQueues()
+        this._initialized = true
+        this._setEnabled(this._readEnabledFlag())
+        Atomics.store(this._sharedControl, CONTROL_WORKER_READY_INDEX, 1)
+        Atomics.add(this._sharedControl, CONTROL_SIGNAL_INDEX, 1)
+        Atomics.notify(this._sharedControl, CONTROL_SIGNAL_INDEX, 1)
+        this._startLoop()
+
+        if (this._debugLogs) {
+            this._global.postMessage({
+                message:
+                    this._engine === "deepfilternet"
+                        ? "DENOISER_WORKER_DF_READY"
+                        : "DENOISER_WORKER_RN_READY",
+            })
+        }
+    }
+
+    private async _initializeBackend(payload: MainToWorkerMessage) {
+        this._algorithmFrameLength = RNNOISE_FRAME
+
+        if (this._engine === "deepfilternet") {
+            const options = this._resolveDeepFilterOptions(payload.deepFilter)
+            this._deepFilterOptions = options
+            await this._initializeDeepFilterBackend(options)
+            return
+        }
+
+        this._initializeRnnoiseBackend()
+    }
+
+    private _initializeRnnoiseBackend() {
         this._rnWasmInterface = createRNNWasmModuleSync() as IRnnoiseModule
         this._rnContext = this._rnWasmInterface._rnnoise_create()
 
@@ -244,11 +338,48 @@ class DenoiserWorkerRuntime {
             heapOffsetOutput + RNNOISE_FRAME,
         )
 
-        this._destroyRequested = false
-        this._resetQueues()
-        this._initialized = true
-        this._setEnabled(this._readEnabledFlag())
-        this._startLoop()
+        this._algorithmFrameLength = RNNOISE_FRAME
+    }
+
+    private async _initializeDeepFilterBackend(options: ResolvedDeepFilterOptions) {
+        this._deepFilterBindings = createDeepFilterWasmModuleSync() as DeepFilterBindings
+
+        const state = await this._createDeepFilterState(options)
+        if (!state) {
+            throw new Error("Failed to create DeepFilterNet state")
+        }
+
+        this._deepFilterState = state
+        const frameLength = this._deepFilterBindings.df_get_frame_length(state)
+        if (!Number.isFinite(frameLength) || frameLength <= 0) {
+            throw new Error(`Invalid DeepFilterNet frame length: ${frameLength}`)
+        }
+
+        this._algorithmFrameLength = frameLength
+        this._applyDeepFilterParams(options.attenLimDb, options.postFilterBeta)
+    }
+
+    private async _createDeepFilterState(options: ResolvedDeepFilterOptions): Promise<number> {
+        if (!this._deepFilterBindings) {
+            throw new Error("DeepFilterNet bindings are missing")
+        }
+
+        if (options.modelUrl) {
+            const modelBytes = await this._loadDeepFilterModel(options.modelUrl)
+            return this._deepFilterBindings.df_create(modelBytes, options.attenLimDb)
+        }
+
+        return this._deepFilterBindings.df_create_default(options.attenLimDb)
+    }
+
+    private async _loadDeepFilterModel(modelUrl: string): Promise<Uint8Array> {
+        const response = await fetch(modelUrl)
+        if (!response.ok) {
+            throw new Error(`Failed to fetch DeepFilter model: ${response.status} ${response.statusText}`)
+        }
+
+        const modelBuffer = await response.arrayBuffer()
+        return new Uint8Array(modelBuffer)
     }
 
     private _startLoop() {
@@ -323,6 +454,43 @@ class DenoiserWorkerRuntime {
         }
     }
 
+    private _updateDeepFilterParams(options?: DeepFilterOptions) {
+        if (!options) {
+            return
+        }
+
+        if (options.modelUrl !== undefined) {
+            this._deepFilterOptions.modelUrl =
+                typeof options.modelUrl === "string" && options.modelUrl.trim().length > 0
+                    ? options.modelUrl
+                    : undefined
+        }
+        if (options.attenLimDb !== undefined) {
+            this._deepFilterOptions.attenLimDb = this._resolveDeepFilterAttenLimDb(options.attenLimDb)
+        }
+        if (options.postFilterBeta !== undefined) {
+            this._deepFilterOptions.postFilterBeta = this._resolveDeepFilterPostFilterBeta(
+                options.postFilterBeta,
+            )
+        }
+
+        if (this._engine === "deepfilternet" && this._deepFilterState && this._deepFilterBindings) {
+            this._applyDeepFilterParams(
+                this._deepFilterOptions.attenLimDb,
+                this._deepFilterOptions.postFilterBeta,
+            )
+        }
+    }
+
+    private _applyDeepFilterParams(attenLimDb: number, postFilterBeta: number) {
+        if (!this._deepFilterBindings || !this._deepFilterState) {
+            return
+        }
+
+        this._deepFilterBindings.df_set_atten_lim(this._deepFilterState, attenLimDb)
+        this._deepFilterBindings.df_set_post_filter_beta(this._deepFilterState, postFilterBeta)
+    }
+
     private _processAvailableBlocks(): boolean {
         if (!this._initialized || !this._sharedInput || !this._sharedOutput) {
             return false
@@ -350,10 +518,10 @@ class DenoiserWorkerRuntime {
             this._inputQueue.push(this._processInputBlock)
 
             while (
-                this._inputQueue.framesAvailable >= RNNOISE_FRAME &&
+                this._inputQueue.framesAvailable >= this._algorithmFrameLength &&
                 this._inputQueue.pullMono(this._inputFrame)
             ) {
-                this._processRnnoiseFrame()
+                this._processCurrentFrame()
                 this._outputQueue.push(this._outputFrame)
             }
 
@@ -367,6 +535,15 @@ class DenoiserWorkerRuntime {
         }
 
         return processedAny
+    }
+
+    private _processCurrentFrame() {
+        if (this._engine === "deepfilternet") {
+            this._processDeepFilterFrame()
+            return
+        }
+
+        this._processRnnoiseFrame()
     }
 
     private _processRnnoiseFrame() {
@@ -397,6 +574,21 @@ class DenoiserWorkerRuntime {
         }
     }
 
+    private _processDeepFilterFrame() {
+        if (!this._deepFilterBindings || !this._deepFilterState) {
+            throw new Error("DeepFilterNet runtime is not initialized")
+        }
+
+        const output = this._deepFilterBindings.df_process_frame(this._deepFilterState, this._inputFrame)
+        if (output.length !== this._algorithmFrameLength) {
+            throw new Error(
+                `DeepFilterNet returned invalid frame size. expected=${this._algorithmFrameLength}, actual=${output.length}`,
+            )
+        }
+
+        this._outputFrame.set(output)
+    }
+
     private _readEnabledFlag(): boolean {
         if (!this._sharedControl) {
             return this._shouldDenoise
@@ -406,11 +598,11 @@ class DenoiserWorkerRuntime {
     }
 
     private _resetQueues() {
-        const queueCapacity = 64 * Math.max(RNNOISE_FRAME, this._processBlockLength)
+        const queueCapacity = 64 * Math.max(this._algorithmFrameLength, this._processBlockLength)
         this._processInputBlock = new Float32Array(this._processBlockLength)
         this._processOutputBlock = new Float32Array(this._processBlockLength)
-        this._inputFrame = new Float32Array(RNNOISE_FRAME)
-        this._outputFrame = new Float32Array(RNNOISE_FRAME)
+        this._inputFrame = new Float32Array(this._algorithmFrameLength)
+        this._outputFrame = new Float32Array(this._algorithmFrameLength)
         this._inputQueue = new MonoRingBuffer(queueCapacity)
         this._outputQueue = new MonoRingBuffer(queueCapacity)
     }
@@ -427,6 +619,40 @@ class DenoiserWorkerRuntime {
             return DEFAULT_VAD_LOG_INTERVAL_MS
         }
         return value ?? DEFAULT_VAD_LOG_INTERVAL_MS
+    }
+
+    private _resolveEngine(engineValue?: DenoiserEngine): DenoiserEngine {
+        if (engineValue === "deepfilternet") {
+            return "deepfilternet"
+        }
+        return "rnnoise"
+    }
+
+    private _resolveDeepFilterOptions(options?: DeepFilterOptions): ResolvedDeepFilterOptions {
+        const modelUrl =
+            typeof options?.modelUrl === "string" && options.modelUrl.trim().length > 0
+                ? options.modelUrl
+                : undefined
+
+        return {
+            modelUrl,
+            attenLimDb: this._resolveDeepFilterAttenLimDb(options?.attenLimDb),
+            postFilterBeta: this._resolveDeepFilterPostFilterBeta(options?.postFilterBeta),
+        }
+    }
+
+    private _resolveDeepFilterAttenLimDb(value?: number): number {
+        if (!Number.isFinite(value)) {
+            return DEFAULT_DF_ATTEN_LIM_DB
+        }
+        return Math.abs(value ?? DEFAULT_DF_ATTEN_LIM_DB)
+    }
+
+    private _resolveDeepFilterPostFilterBeta(value?: number): number {
+        if (!Number.isFinite(value)) {
+            return DEFAULT_DF_POST_FILTER_BETA
+        }
+        return Math.max(0, value ?? DEFAULT_DF_POST_FILTER_BETA)
     }
 
     private _maybeEmitVadLog(vadScore: number) {
@@ -447,11 +673,7 @@ class DenoiserWorkerRuntime {
         })
     }
 
-    private _releaseRuntime(closeSharedState: boolean) {
-        this._initialized = false
-        this._loopRunning = false
-        this._lastVadLogAtMs = 0
-
+    private _releaseRnnoiseRuntime() {
         if (this._rnContext && this._rnWasmInterface) {
             this._rnWasmInterface._rnnoise_destroy(this._rnContext)
             this._rnContext = 0
@@ -470,9 +692,32 @@ class DenoiserWorkerRuntime {
         this._rnInputHeap = undefined
         this._rnOutputHeap = undefined
         this._rnWasmInterface = undefined
+    }
+
+    private _releaseDeepFilterRuntime() {
+        if (this._deepFilterState && this._deepFilterBindings) {
+            this._deepFilterBindings.df_destroy(this._deepFilterState)
+            this._deepFilterState = 0
+        }
+    }
+
+    private _releaseRuntime(closeSharedState: boolean) {
+        this._initialized = false
+        this._loopRunning = false
+        this._lastVadLogAtMs = 0
+
+        if (this._sharedControl) {
+            Atomics.store(this._sharedControl, CONTROL_WORKER_READY_INDEX, 0)
+            Atomics.add(this._sharedControl, CONTROL_SIGNAL_INDEX, 1)
+            Atomics.notify(this._sharedControl, CONTROL_SIGNAL_INDEX, 1)
+        }
+
+        this._releaseRnnoiseRuntime()
+        this._releaseDeepFilterRuntime()
 
         this._inputQueue.clear()
         this._outputQueue.clear()
+        this._algorithmFrameLength = RNNOISE_FRAME
 
         if (closeSharedState) {
             this._sharedInput = undefined
@@ -512,13 +757,5 @@ const workerGlobal = globalThis as unknown as WorkerGlobalLike
 const runtime = new DenoiserWorkerRuntime(workerGlobal)
 
 workerGlobal.onmessage = (event: MessageEvent<MainToWorkerMessage>) => {
-    try {
-        runtime.handleMainMessage(event.data)
-    } catch (error) {
-        workerGlobal.postMessage({
-            message: "DENOISER_WORKER_ERROR",
-            error: error instanceof Error ? error.message : String(error),
-        })
-        runtime.destroy()
-    }
+    runtime.handleMainMessage(event.data)
 }
