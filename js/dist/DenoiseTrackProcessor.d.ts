@@ -30,5 +30,6 @@ export declare class DenoiseTrackProcessor implements TrackProcessor<Track.Kind.
     private _requestSharedDestroy;
     private _resolveWorkerURL;
     private _derivePeerAssetURL;
+    private _getVadLogIntervalMs;
     _closeInternal(): void;
 }

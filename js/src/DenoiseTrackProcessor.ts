@@ -10,16 +10,22 @@ import {
 } from "./sharedMemory"
 
 export type DenoiseFilterOptions = DenoiseOptions
+const DEFAULT_VAD_LOG_INTERVAL_MS = 1000
 
 interface RuntimeMessage {
     message?: string
     error?: string
+    vadScore?: number
+    intervalMs?: number
 }
 
 interface MainToWorkerMessage {
     message: string
     sampleRate?: number
     enable?: boolean
+    debugLogs?: boolean
+    vadLogs?: boolean
+    bufferOverflowMs?: number
     sharedBuffers?: SharedBufferPayload
 }
 
@@ -53,6 +59,21 @@ export class DenoiseTrackProcessor implements TrackProcessor<
         const fromWorklet = payload.message.includes("WORKLET")
         const sourceTag = fromWorklet ? "[DenoiserRuntime][Worklet]" : "[DenoiserRuntime][Worker]"
 
+        if (payload.message === "DENOISER_WORKER_VAD") {
+            const vadScore =
+                typeof payload.vadScore === "number" && Number.isFinite(payload.vadScore)
+                    ? payload.vadScore.toFixed(4)
+                    : "n/a"
+            const intervalMs =
+                typeof payload.intervalMs === "number" && Number.isFinite(payload.intervalMs)
+                    ? payload.intervalMs
+                    : this._getVadLogIntervalMs()
+            console.log(
+                `${sourceTag}[${payload.message}] vadScore=${vadScore} intervalMs=${intervalMs}`,
+            )
+            return
+        }
+
         if (payload.message.endsWith("ERROR")) {
             console.error(
                 `${sourceTag}[${payload.message}] ${payload.error ?? "Unknown runtime error"}`,
@@ -64,7 +85,12 @@ export class DenoiseTrackProcessor implements TrackProcessor<
     }
 
     constructor(options?: DenoiseFilterOptions) {
-        this.filterOpts = options ?? { debugLogs: false, bufferOverflowMs: 0 }
+        this.filterOpts = {
+            debugLogs: false,
+            vadLogs: false,
+            bufferOverflowMs: DEFAULT_VAD_LOG_INTERVAL_MS,
+            ...options,
+        }
     }
 
     static isSupported(): boolean {
@@ -209,6 +235,9 @@ export class DenoiseTrackProcessor implements TrackProcessor<
         this.denoiseWorker.postMessage({
             message: "INIT",
             sampleRate: ctx.sampleRate,
+            debugLogs: this.filterOpts?.debugLogs,
+            vadLogs: this.filterOpts?.vadLogs,
+            bufferOverflowMs: this._getVadLogIntervalMs(),
         } as MainToWorkerMessage)
         this.denoiseNode.port.postMessage({ message: "SET_ENABLED", enable: this.enabled })
 
@@ -291,6 +320,14 @@ export class DenoiseTrackProcessor implements TrackProcessor<
         } catch (_error) {
             return sourceUrl.replace("DenoiserWorklet.js", targetFileName)
         }
+    }
+
+    private _getVadLogIntervalMs(): number {
+        const interval = this.filterOpts?.bufferOverflowMs
+        if (!Number.isFinite(interval) || (interval ?? 0) <= 0) {
+            return DEFAULT_VAD_LOG_INTERVAL_MS
+        }
+        return interval ?? DEFAULT_VAD_LOG_INTERVAL_MS
     }
 
     _closeInternal() {

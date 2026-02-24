@@ -20,6 +20,7 @@ import {
 const RNNOISE_SCALE = 32768
 const WAIT_TIMEOUT_MS = 50
 const MAX_BLOCKS_PER_TICK = 96
+const DEFAULT_VAD_LOG_INTERVAL_MS = 1000
 
 interface IRnnoiseModule extends EmscriptenModule {
     _malloc: (size: number) => number
@@ -33,6 +34,9 @@ interface MainToWorkerMessage {
     message: string
     sampleRate?: number
     enable?: boolean
+    debugLogs?: boolean
+    vadLogs?: boolean
+    bufferOverflowMs?: number
     sharedBuffers?: SharedBufferPayload
     error?: string
 }
@@ -105,6 +109,10 @@ class DenoiserWorkerRuntime {
     private _destroyRequested = false
     private _loopRunning = false
     private _lastSignalValue = 0
+    private _debugLogs = false
+    private _vadLogs = false
+    private _vadLogIntervalMs = DEFAULT_VAD_LOG_INTERVAL_MS
+    private _lastVadLogAtMs = 0
 
     private _sharedInput?: SharedRingBufferView
     private _sharedOutput?: SharedRingBufferView
@@ -195,6 +203,10 @@ class DenoiserWorkerRuntime {
         }
 
         this._sampleRate = this._resolveSampleRate(payload.sampleRate)
+        this._debugLogs = payload.debugLogs ?? false
+        this._vadLogs = payload.vadLogs ?? false
+        this._vadLogIntervalMs = this._resolveVadLogIntervalMs(payload.bufferOverflowMs)
+        this._lastVadLogAtMs = 0
 
         if (this._sampleRate !== REQUIRED_SAMPLE_RATE) {
             throw new Error(
@@ -296,6 +308,7 @@ class DenoiserWorkerRuntime {
 
     private _setEnabled(enable: boolean) {
         this._shouldDenoise = enable
+        this._lastVadLogAtMs = 0
 
         if (this._sharedControl) {
             Atomics.store(this._sharedControl, CONTROL_ENABLED_INDEX, enable ? 1 : 0)
@@ -372,11 +385,12 @@ class DenoiserWorkerRuntime {
             this._rnInputHeap[i] = this._inputFrame[i] * RNNOISE_SCALE
         }
 
-        this._rnWasmInterface._rnnoise_process_frame(
+        const vadScore = this._rnWasmInterface._rnnoise_process_frame(
             this._rnContext,
             this._rnOutputPtr,
             this._rnInputPtr,
         )
+        this._maybeEmitVadLog(vadScore)
 
         for (let i = 0; i < RNNOISE_FRAME; i += 1) {
             this._outputFrame[i] = this._rnOutputHeap[i] / RNNOISE_SCALE
@@ -408,9 +422,35 @@ class DenoiserWorkerRuntime {
         return sampleRateValue ?? REQUIRED_SAMPLE_RATE
     }
 
+    private _resolveVadLogIntervalMs(value?: number): number {
+        if (!Number.isFinite(value) || (value ?? 0) <= 0) {
+            return DEFAULT_VAD_LOG_INTERVAL_MS
+        }
+        return value ?? DEFAULT_VAD_LOG_INTERVAL_MS
+    }
+
+    private _maybeEmitVadLog(vadScore: number) {
+        if (!this._debugLogs || !this._vadLogs) {
+            return
+        }
+
+        const nowMs = this._nowMs()
+        if (nowMs - this._lastVadLogAtMs < this._vadLogIntervalMs) {
+            return
+        }
+
+        this._lastVadLogAtMs = nowMs
+        this._global.postMessage({
+            message: "DENOISER_WORKER_VAD",
+            vadScore,
+            intervalMs: this._vadLogIntervalMs,
+        })
+    }
+
     private _releaseRuntime(closeSharedState: boolean) {
         this._initialized = false
         this._loopRunning = false
+        this._lastVadLogAtMs = 0
 
         if (this._rnContext && this._rnWasmInterface) {
             this._rnWasmInterface._rnnoise_destroy(this._rnContext)
@@ -458,6 +498,13 @@ class DenoiserWorkerRuntime {
             message: "DENOISER_WORKER_ERROR",
             error: error instanceof Error ? error.message : String(error),
         })
+    }
+
+    private _nowMs(): number {
+        if (globalThis.performance && typeof globalThis.performance.now === "function") {
+            return globalThis.performance.now()
+        }
+        return Date.now()
     }
 }
 
