@@ -1,0 +1,482 @@
+name: publish-DeepFilterNet
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Which tag to deploy as:"
+        required: true
+  push:
+    tags:
+      - "v*[0-9]+.[0-9]+.[0-9]+"
+
+jobs:
+  create-release:
+    name: create-release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      df_version: ${{ env.DF_VERSION }}
+      upload_url: ${{ steps.release.outputs.upload_url }}
+    steps:
+      - name: Checkout DeepFilterNet
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+      - name: Get the release version from the tag
+        shell: bash
+        if: env.DF_VERSION == ''
+        run: |
+          DF_VERSION=$(cargo pkgid --manifest-path libDF/Cargo.toml | sed -e 's/^.*deep_filter@//g')
+          if [[ $DF_VERSION =~ ^.*-pre$ ]]; then DF_VERSION="$DF_VERSION"-"$(git rev-parse --short HEAD)"; fi
+          echo "DF_VERSION=$DF_VERSION"
+          echo "DF_VERSION=$DF_VERSION" >> $GITHUB_ENV
+          echo "DF_VERSION=$DF_VERSION" >> $GITHUB_OUTPUT
+      - name: Create Release
+        id: release
+        uses: ncipollo/release-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag: v${{ env.DF_VERSION }}
+          draft: true
+
+  build-libdf-wheels:
+    needs: ['create-release']
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python:
+          - version: "3.8"
+            tag: "38"
+            abi: cp38-cp38
+          - version: "3.9"
+            tag: "39"
+            abi: cp39-cp39
+          - version: "3.10"
+            tag: "310"
+            abi: cp310-cp310
+          - version: "3.11"
+            tag: "311"
+            abi: cp311-cp311
+        df_wheel: ["pyDF", "pyDF-data"]
+        build: [linux-x86, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
+        include:
+          - build: linux-x86
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            container: quay.io/pypa/manylinux_2_28_x86_64:latest
+          - build: linux-arm-aarch64
+            os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            # container: quay.io/pypa/manylinux_2_28_aarch64:latest
+            container: ghcr.io/rust-cross/manylinux_2_28-cross:aarch64
+          # - build: linux-arm-v7
+            # os: ubuntu-22.04
+            # target: armv7-unknown-linux-gnueabihf
+            # container: ghcr.io/rust-cross/manylinux_2_28-cross:armv7
+          - build: macos-x86
+            os: macos-13
+            target: x86_64-apple-darwin
+          - build: macos-aarch64
+            os: macos-13
+            target: aarch64-apple-darwin
+          - build: win-msvc
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+        exclude:
+          - build: win-msvc
+            df_wheel: pyDF-data
+          - build: macos-x86
+            df_wheel: pyDF-data
+          - build: macos-aarch64
+            df_wheel: pyDF-data
+          - build: linux-arm-aarch64
+            df_wheel: pyDF-data
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout DeepFilterNet
+        uses: actions/checkout@v4
+
+      - name: Echo git tag
+        run: |
+          echo "OS: ${{runner.os}}"
+          echo "git tag: ${{github.event.head_commit.message}}"
+
+      - name: Show DF version
+        run: |
+          echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
+
+      - name: Install HDF5
+        if: runner.os == 'linux' && matrix.df_wheel == 'pyDF-data'
+        run: |
+          dnf install -y epel-release
+          dnf install -y hdf5-devel
+
+      - name: Install Python
+        if: runner.os != 'linux'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python.version }}
+      - name: Setup Python manylinux x86
+        if: matrix.build == 'linux-x86'
+        run: |
+          ls -l "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.tag }}/bin/"
+          ls -l /etc/*release
+          echo "/opt/python/cp${{ matrix.python.tag }}-cp${{ matrix.python.tag }}/bin/" >> $GITHUB_PATH
+      - name: Setup Python manylinux arm
+        if: startsWith(matrix.build, 'linux-arm')
+        run: |
+          ls -l /opt/python/*
+          echo "PYO3_CROSS_PYTHON_VERSION=${{matrix.python.version}}" >> $GITHUB_ENV
+          echo "PYO3_CROSS_LIB_DIR=/opt/python/${{matrix.python.abi}}" >> $GITHUB_ENV
+
+      - name: Install Maturin
+        run: |
+          python -m pip install maturin
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Build source distribution
+        run: |
+          mkdir -p target/wheels
+          maturin build --profile=release-lto \
+            --target=${{ matrix.target }} \
+            -m ${{ matrix.df_wheel }}/Cargo.toml \
+            --sdist \
+            -i python${{ matrix.python.version }} \
+            -o target/wheels/
+
+      - name: Build wheel unix
+        if: runner.os != 'windows'
+        run: |
+          mkdir -p target/wheels
+          maturin build --profile=release-lto \
+            --target=${{ matrix.target }} \
+            -m ${{ matrix.df_wheel }}/Cargo.toml \
+            -i python${{ matrix.python.version }} \
+            -o target/wheels/
+
+      - name: Build wheel windows
+        if: runner.os == 'windows'
+        run: |
+          mkdir -p target/wheels target/repaired
+          maturin build --profile=release-lto \
+            --target=${{ matrix.target }} \
+            -m ${{ matrix.df_wheel }}/Cargo.toml \
+            -i python.exe \
+            -o target/wheels/
+          pip install delvewheel wheel
+          delvewheel repair target/wheels/DeepFilterLib-*.whl -w target/repaired
+          mv target/repaired/* target/wheels/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libdf-wheels-${{ needs.create-release.outputs.df_version }}
+          path: target/wheels/
+
+  build-deepfilternet-wheels:
+    needs: ['create-release']
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10"] # wheel will be independent of python version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install poetry
+        run: pip install poetry
+      - name: Build wheels
+        run: poetry build -vvv
+        working-directory: DeepFilterNet
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepfilternet-wheels-${{ needs.create-release.outputs.df_version }}
+          path: DeepFilterNet/dist/
+
+  publish-pypi-wheels:
+    runs-on: ubuntu-22.04
+    needs: [build-libdf-wheels, build-deepfilternet-wheels, create-release]
+    steps:
+      - uses: actions/setup-python@v5
+      - name: Show DF version
+        run: |
+          echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
+      - name: Get libdf wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: libdf-wheels-${{ env.DF_VERSION }}
+          path: libdf-wheels
+      - name: Get deepfilternet wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: deepfilternet-wheels-${{ env.DF_VERSION }}
+          path: deepfilternet-wheels
+      - name: Install Maturin
+        run: python -m pip install maturin
+      - name: Publish
+        shell: bash
+        env:
+          USER: ${{ secrets.PYPI_USER }}
+          PW: ${{ secrets.PYPI_PW }}
+        run: |
+          ls -l libdf-wheels/*${{ env.DF_VERSION }}*
+          ls -l deepfilternet-wheels/*${{ env.DF_VERSION }}*
+          maturin upload -u "$USER" -p "$PW" libdf-wheels/*${{ env.DF_VERSION }}*
+          maturin upload -u "$USER" -p "$PW" deepfilternet-wheels/*${{ env.DF_VERSION }}*
+
+  build-arm-wheels:
+    name: Cross Compile ARM Python Wheels
+    needs: ['create-release']
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        rust: [stable]
+        manylinux: [2014]
+        python:
+          # CPython
+          - version: "3.8"
+            abi: cp38-cp38
+          - version: "3.9"
+            abi: cp39-cp39
+          - version: "3.10"
+            abi: cp310-cp310
+        platform:
+          - target: aarch64-unknown-linux-gnu
+            arch: aarch64
+          - target: armv7-unknown-linux-gnueabihf
+            arch: armv7
+    container:
+      image: docker://messense/manylinux${{matrix.manylinux}}-cross:${{matrix.platform.arch}}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          target: ${{ matrix.platform.target }}
+      - name: Set Python Version
+        run: |
+          echo "PYO3_CROSS_PYTHON_VERSION=${{matrix.python.version}}" >> $GITHUB_ENV
+          echo "PYO3_CROSS_LIB_DIR=/opt/python/${{matrix.python.abi}}" >> $GITHUB_ENV
+      - name: Build DeepFilterLib wheel
+        run: |
+          sudo python3 -m pip install maturin
+          maturin build --release -o dist \
+            -i python3.9 \
+            --target ${{ matrix.platform.target }} \
+            --manylinux ${{ matrix.manylinux }} \
+            -m pyDF/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libdf-arm-wheels
+          path: dist/
+
+  build-deepfilter-rs:
+    needs: ['create-release']
+    runs-on: ${{ matrix.os }}
+    env:
+      # For some builds, we use cross to test on 32-bit and big-endian
+      # systems.
+      CARGO: cargo
+      # When CARGO is set to CROSS, this is set to `--target matrix.target`.
+      TARGET_FLAGS: ""
+      # When CARGO is set to CROSS, TARGET_DIR includes matrix.target.
+      TARGET_DIR: ./target
+      # Emit backtraces on panics.
+      RUST_BACKTRACE: 1
+      # Cargo build options
+      PACKAGE: deep_filter
+      BIN: deep-filter
+      FEATURES: bin,tract,use-jemalloc,wav-utils,transforms,default-model
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [linux-x86, linux-arm-v7, linux-arm-aarch64, macos-x86, macos-aarch64, win-msvc]
+        include:
+          - build: linux-x86
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+          - build: linux-arm-v7
+            os: ubuntu-22.04
+            target: armv7-unknown-linux-gnueabihf
+          - build: linux-arm-aarch64
+            os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+          - build: macos-x86
+            os: macos-13
+            target: x86_64-apple-darwin
+          - build: macos-aarch64
+            os: macos-13
+            target: aarch64-apple-darwin
+          - build: win-msvc
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            ext: .exe
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Show DF version
+        run: |
+          echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
+
+      - name: Use Cross
+        shell: bash
+        run: |
+          cargo install cross
+          echo "CARGO=cross" >> $GITHUB_ENV
+          echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
+          echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
+
+      - name: Show command used for Cargo
+        run: |
+          echo "cargo command is: ${{ env.CARGO }}"
+          echo "target flag is: ${{ env.TARGET_FLAGS }}"
+          echo "target dir is: ${{ env.TARGET_DIR }}"
+          echo "DF_BIN_NAME=deep-filter-${{ env.DF_VERSION }}-${{ matrix.target }}${{ matrix.ext }}" >> $GITHUB_ENV
+
+      - name: Build release binary
+        run: | 
+          ${{ env.CARGO }} build --verbose --profile=release \
+            --features ${{ env.FEATURES }} \
+            -p ${{ env.PACKAGE }} \
+            --bin ${{ env.BIN }} \
+            ${{ env.TARGET_FLAGS }}
+
+      - name: Rename to target
+        run: |
+          mv "target/${{ matrix.target }}/release/deep-filter${{ matrix.ext }}" "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
+          chmod +x "${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DF_BIN_NAME }}
+          path: ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
+
+      - name: Upload release archive
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: gh release upload --clobber v${{ env.DF_VERSION }} ${{ env.TARGET_DIR }}/${{ env.DF_BIN_NAME }}
+
+  build-deepfilter-ladspa:
+    needs: ['create-release']
+    runs-on: ${{ matrix.os }}
+    env:
+      # For some builds, we use cross to test on 32-bit and big-endian
+      # systems.
+      CARGO: cargo
+      # When CARGO is set to CROSS, this is set to `--target matrix.target`.
+      TARGET_FLAGS: ""
+      # When CARGO is set to CROSS, TARGET_DIR includes matrix.target.
+      TARGET_DIR: ./target
+      # Emit backtraces on panics.
+      RUST_BACKTRACE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [linux-x86, linux-arm-v7, linux-arm-aarch64, win-msvc] #, macos-x86, macos-aarch64
+        include:
+          - build: linux-x86
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            libname: libdeep_filter_ladspa
+            libext: so
+          - build: linux-arm-v7
+            os: ubuntu-22.04
+            target: armv7-unknown-linux-gnueabihf
+            libname: libdeep_filter_ladspa
+            libext: so
+          - build: linux-arm-aarch64
+            os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            libname: libdeep_filter_ladspa
+            libext: so
+          - build: win-msvc
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            libname: deep_filter_ladspa
+            libext: dll
+          # - build: macos-x86
+          #   os: macos-x86
+          #   target: x86_64-apple-darwin
+          #   libname: libdeep_filter_ladspa
+          #   libext: dylib
+          # - build: macos-aarch64
+          #   os: macos-aarch64
+          #   target: aarch64-apple-darwin
+          #   libname: libdeep_filter_ladspa
+          #   libext: dylib
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Show DF version
+        run: |
+          echo "DF_VERSION=${{ needs.create-release.outputs.df_version }}" >> $GITHUB_ENV
+
+      - name: Use Cross
+        shell: bash
+        run: |
+          cargo install cross
+          echo "CARGO=cross" >> $GITHUB_ENV
+          echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
+          echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
+
+      - name: Show command used for Cargo
+        run: |
+          echo "cargo command is: ${{ env.CARGO }}"
+          echo "target flag is: ${{ env.TARGET_FLAGS }}"
+          echo "target dir is: ${{ env.TARGET_DIR }}"
+          echo "DF_LADSPA_NAME=${{ matrix.libname }}-${{ env.DF_VERSION }}-${{ matrix.target }}.${{ matrix.libext }}" >> $GITHUB_ENV
+
+      - name: Build release binary
+        run: ${{ env.CARGO }} build --profile=release-lto -p deep-filter-ladspa ${{ env.TARGET_FLAGS }}
+
+      - name: Rename to target
+        run: |
+          mv "target/${{ matrix.target }}/release-lto/${{ matrix.libname }}.${{ matrix.libext }}" "${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DF_LADSPA_NAME }}
+          path: ${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}
+
+      - name: Upload release archive
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: gh release upload v${{ env.DF_VERSION }} ${{ env.TARGET_DIR }}/${{ env.DF_LADSPA_NAME }}

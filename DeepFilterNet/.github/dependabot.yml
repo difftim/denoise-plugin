@@ -1,0 +1,24 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directories:
+      - "/libDF/"
+      - "/pyDF/"
+      - "/pyDF-data/"
+      - "/ladspa/"
+      - "/demo/"
+    schedule:
+      interval: "daily"
+    groups:
+      tract:
+        applies-to: version-updates
+        patterns:
+          - "@tract*"
+  - package-ecosystem: "pip"
+    directory: "/DeepFilterNet/"
+    schedule:
+      interval: "daily"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

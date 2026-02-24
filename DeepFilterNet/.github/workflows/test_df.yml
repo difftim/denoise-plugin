@@ -1,0 +1,158 @@
+name: Test DF
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_run:
+    workflows: ["publish-pypi-wheels"]
+    branches: [main]
+    types:
+      - completed
+  schedule:
+    - cron: '0 18 * * 0'
+
+jobs:
+  test-df-output:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: "ubuntu-latest"
+          # - os: "macos-latest"  # Fails to install hdf5 from git
+          - os: "windows-latest"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Echo git tag
+        run: |
+          echo "git tag: ${{github.event.head_commit.message}}"
+          echo "git tag: ${{github.event.commits[0].message}}"
+          echo "DF version:  $(scripts/get_version.sh)"
+          echo "DF_VERSION=$(scripts/get_version.sh)" >> $GITHUB_ENV
+      - name: should it be skipped?
+        env:
+          COMMIT_FILTER: '^v[0-9]+.[0-9]+.[0-9]+$'
+        run: |
+          readonly local last_commit_log=$(git log -1 --pretty=format:"%s")
+          echo "last commit log: $last_commit_log"
+          readonly local filter_count=$(echo "$last_commit_log" | grep -E -c "$COMMIT_FILTER" )
+          if ! [[ "$filter_count" -eq 0 ]]; then
+            echo "the last commit log \"$last_commit_log\" contains \"$COMMIT_FILTER\", stopping"
+            exit 78
+          fi
+      - name: Cancel Previous Runs
+        uses: styfle/cancel-workflow-action@0.12.1
+        with:
+          access_token: ${{ github.token }}
+      # Soundfile backend for torchaudio
+      - name: Set Extra Dependency Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo "EXTRA=-E soundfile" >> $GITHUB_ENV
+
+      # Rust installation
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+      # Python and poetry install
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          cache: 'pip'
+          cache-dependency-path: '**/pyproject.toml'
+          python-version: "3.10"
+      - name: Load cached Poetry installation
+        if: matrix.os != 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: ~/.local
+          key: poetry-${{ runner.os }}-${{ matrix.python }}-1
+      - name: Bootstrap poetry
+        run: |
+          curl -sL https://install.python-poetry.org | python - -y
+      - name: Update PATH
+        if: ${{ matrix.os != 'windows-latest' }}
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Update Path for Windows
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          echo "$APPDATA\Python\Scripts" >> $GITHUB_PATH
+          which python
+          python --version
+      - name: Configure poetry
+        run: poetry config virtualenvs.in-project true
+      - name: Set venv up cache
+        uses: actions/cache@v4
+        id: cache
+        with:
+          path: |
+            ~/.cache/DeepFilterNet
+            .venv
+            DeepFilterNet/.venv
+          key: venv-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('**/pyproject.toml') }}
+
+      # Install DeepFilterNet and dependencies
+      - name: Install runtime dependencies and DeepFilterNet
+        if: matrix.os != 'windows-latest'
+        working-directory: DeepFilterNet
+        run: |
+          poetry --version
+          poetry install -vvv --no-interaction -E eval -E dnsmos-local ${{env.EXTRA}}
+          echo "Installing pytorch"
+          poetry run poe install-torch-cpu
+          poetry run poe install-dnsmos-utils
+      - name: Install runtime dependencies and DeepFilterNet for Windows
+        if: matrix.os == 'windows-latest'
+        working-directory: DeepFilterNet
+        run: |
+          poetry --version
+          poetry install -vvv --no-interaction -E dnsmos-local ${{env.EXTRA}}
+          echo "Installing pytorch"
+          poetry run poe install-torch-cpu
+          echo "Installing eval-utils"
+          poetry run poe install-eval-utils
+          poetry run poe install-dnsmos-utils
+
+      # Run tests
+      - name: Run DF Test
+        working-directory: DeepFilterNet
+        run: |
+          poetry run python df/scripts/test_df.py
+
+      - name: Test python deepFilter script
+        working-directory: DeepFilterNet
+        run: |
+          mkdir ../out
+          poetry run deepFilter --version
+          poetry run deepFilter --no-delay-compensation ../assets/noisy_snr0.wav -m DeepFilterNet -o ../out
+          poetry run deepFilter --no-delay-compensation ../assets/noisy_snr0.wav -m DeepFilterNet2 -o ../out
+          poetry run deepFilter --no-delay-compensation ../assets/noisy_snr0.wav -m DeepFilterNet3 -o ../out
+          poetry run python df/scripts/dnsmos_dns5.py eval-sample ../assets/noisy_snr0.wav -t 3.604316132288559 2.682694789493083 2.58449544791776 2.981942
+          poetry run python df/scripts/dnsmos_dns5.py eval-sample ../out/noisy_snr0_DeepFilterNet.wav -t 3.347275035532741 4.0226200060870045 3.0721500373065647 3.6992884
+          poetry run python df/scripts/dnsmos_dns5.py eval-sample ../out/noisy_snr0_DeepFilterNet2.wav -t 3.356522067484457 4.094995405584476 3.1071521784172025 3.737621
+          poetry run python df/scripts/dnsmos_dns5.py eval-sample ../out/noisy_snr0_DeepFilterNet3.wav -t 3.4399468223627174 4.144957235621709 3.2074756563112996 3.7088842
+
+      - name: Test rust deep-filter script
+        run: |
+          cargo run -p deep_filter --profile=release --features=tract,bin,wav-utils,transforms --bin deep-filter -- ./assets/noisy_snr0.wav -m ./models/DeepFilterNet3_onnx.tar.gz -o out_DeepFilterNet3 -vvvv
+          cd DeepFilterNet
+          poetry run python df/scripts/dnsmos_dns5.py eval-sample ../out_DeepFilterNet3/noisy_snr0.wav -t 3.385834652850639 4.130096419832765 3.153399733642353 3.594115
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: enhanced-${{ runner.os }}
+          path: out/*wav

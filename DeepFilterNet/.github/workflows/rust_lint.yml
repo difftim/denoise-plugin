@@ -1,0 +1,58 @@
+name: Rust CI
+
+on:
+  push:
+  schedule:
+    - cron: '0 18 * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      RUST_BACKTRACE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {command: fmt, rust: nightly, args: '--all -- --check', hdf5: false}
+          - {command: clippy, rust: nightly, args: '-p df-demo --tests --all-features -- -D warnings', alsa: true}
+          - {command: clippy, rust: nightly, args: '-p deep_filter --tests --all-features -- -D warnings', hdf5: true}
+          - {command: test, rust: stable, args: '--all-features -p deep_filter', hdf5: true}
+          - {command: build, rust: stable, args: '-p deep_filter', hdf5: false}
+          - {command: build, rust: stable, args: '-p DeepFilterLib', hdf5: false}
+          - {command: build, rust: stable, args: '-p DeepFilterDataLoader', hdf5: true}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: 'rustfmt, clippy'
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ runner.os }}-${{ matrix.command }}-${{matrix.rust}}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          cache-on-failure: true
+      - name: Install HDF5
+        if: matrix.hdf5 == true
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install libhdf5-dev
+      - name: Install HDF5
+        if: matrix.alsa == true
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install libasound2-dev
+      - name: Run cargo ${{matrix.command}}
+        shell: bash
+        run: |
+          cargo ${{matrix.command}} ${{matrix.args}}
+      - uses: actions/upload-artifact@v4
+        if: matrix.command == 'test'
+        with:
+          name: test-artifacts
+          path: out/
