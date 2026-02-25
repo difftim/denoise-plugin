@@ -20,7 +20,7 @@ module.exports = {
         {
             file: "dist/index.umd.js",
             format: "umd",
-            name: "DenoisePlugin",
+            name: "AudioPipelinePlugin",
             sourcemap: true,
         },
     ],

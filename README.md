@@ -1,15 +1,25 @@
-# Denoise-Plugin
+# Audio-Pipeline-Plugin
 
-- A WebAssembly module implementing the RNNoise noise suppression library for web frontends.
-- Designed as a denoise filter for the LiveKit audio processor, ensuring effective noise reduction for high-quality audio processing.
+- A cross-platform noise processing plugin package.
+- Web runtime now uses a fixed-order `AudioPipelineTrackProcessor` with a denoise stage (`rnnoise` / `deepfilternet`).
 
 ## Web
 ```js
-npm install @cc-livekit/denoise-plugin@1.0.4
+npm install @cc-livekit/audio-pipeline-plugin@1.0.4
 
-yarn add @cc-livekit/denoise-plugin@1.0.4
+yarn add @cc-livekit/audio-pipeline-plugin@1.0.4
 
-pnpm install @cc-livekit/denoise-plugin@1.0.4
+pnpm install @cc-livekit/audio-pipeline-plugin@1.0.4
+```
+
+Web quick use:
+
+```ts
+import { AudioPipelineTrackProcessor } from "@cc-livekit/audio-pipeline-plugin"
+
+const processor = new AudioPipelineTrackProcessor({
+    workletUrl: "/assets/AudioPipelineWorklet.js",
+})
 ```
 
 ## Android

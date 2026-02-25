@@ -6,7 +6,7 @@ const __dirname = path.dirname(__filename)
 
 export default {
     entry: {
-        DenoiserWorklet: "./src/DenoiserWorklet.ts",
+        AudioPipelineWorklet: "./src/AudioPipelineWorklet.ts",
     },
     output: {
         filename: "[name].js",

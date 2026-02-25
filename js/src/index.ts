@@ -1,5 +1,11 @@
-import { DenoiseTrackProcessor, type DenoiseFilterOptions } from "./DenoiseTrackProcessor"
+import { AudioPipelineTrackProcessor } from "./AudioPipelineTrackProcessor"
 
-export { DenoiseTrackProcessor }
+export { AudioPipelineTrackProcessor }
 
-export type { DenoiseFilterOptions }
+export type {
+    AudioPipelineOptions,
+    DeepFilterModuleConfig,
+    DenoiseModuleId,
+    PipelineStage,
+    RnnoiseModuleConfig,
+} from "./options"

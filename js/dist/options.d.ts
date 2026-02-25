@@ -1,14 +1,24 @@
-export type DenoiserEngine = "rnnoise" | "deepfilternet";
-export interface DeepFilterOptions {
+export type PipelineStage = "denoise";
+export type DenoiseModuleId = "rnnoise" | "deepfilternet";
+export interface RnnoiseModuleConfig {
+    vadLogs?: boolean;
+    bufferOverflowMs?: number;
+}
+export interface DeepFilterModuleConfig {
     modelUrl?: string;
+    modelBuffer?: ArrayBuffer;
+    clearModel?: boolean;
     attenLimDb?: number;
     postFilterBeta?: number;
 }
-export declare class DenoiseOptions {
+export interface AudioPipelineOptions {
+    workletUrl: string;
     debugLogs?: boolean;
-    vadLogs?: boolean;
-    bufferOverflowMs?: number;
-    workletUrl?: string;
-    engine?: DenoiserEngine;
-    deepFilter?: DeepFilterOptions;
+    stages?: {
+        denoise?: DenoiseModuleId;
+    };
+    moduleConfigs?: {
+        rnnoise?: RnnoiseModuleConfig;
+        deepfilternet?: DeepFilterModuleConfig;
+    };
 }

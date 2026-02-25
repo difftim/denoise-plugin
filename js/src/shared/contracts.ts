@@ -1,0 +1,85 @@
+import type {
+    DenoiseModuleId,
+    DeepFilterModuleConfig,
+    PipelineStage,
+    RnnoiseModuleConfig,
+} from "../options"
+
+export const COMMAND_TIMEOUT_MS = 10000
+export const REQUIRED_SAMPLE_RATE = 48000
+
+export interface WorkletRnnoiseConfigPayload extends RnnoiseModuleConfig {}
+
+export interface WorkletDeepFilterConfigPayload extends Omit<
+    DeepFilterModuleConfig,
+    "modelBuffer"
+> {
+    modelBuffer?: ArrayBuffer
+}
+
+export type WorkletModuleConfigPayload =
+    | WorkletRnnoiseConfigPayload
+    | WorkletDeepFilterConfigPayload
+
+export interface WorkletModuleConfigPayloadMap {
+    rnnoise?: WorkletRnnoiseConfigPayload
+    deepfilternet?: WorkletDeepFilterConfigPayload
+}
+
+interface BaseMainToWorkletMessage {
+    requestId?: number
+}
+
+export interface InitPipelineMessage extends BaseMainToWorkletMessage {
+    message: "INIT_PIPELINE"
+    sampleRate?: number
+    enable?: boolean
+    debugLogs?: boolean
+    stages?: {
+        denoise?: DenoiseModuleId
+    }
+    moduleConfigs?: WorkletModuleConfigPayloadMap
+}
+
+export interface SetEnabledMessage extends BaseMainToWorkletMessage {
+    message: "SET_ENABLED"
+    enable: boolean
+}
+
+export interface SetStageModuleMessage extends BaseMainToWorkletMessage {
+    message: "SET_STAGE_MODULE"
+    stage: PipelineStage
+    moduleId: DenoiseModuleId
+    config?: WorkletModuleConfigPayload
+}
+
+export interface SetModuleConfigMessage extends BaseMainToWorkletMessage {
+    message: "SET_MODULE_CONFIG"
+    moduleId: DenoiseModuleId
+    config: WorkletModuleConfigPayload
+}
+
+export interface DestroyMessage extends BaseMainToWorkletMessage {
+    message: "DESTROY"
+}
+
+export type MainToWorkletMessage =
+    | InitPipelineMessage
+    | SetEnabledMessage
+    | SetStageModuleMessage
+    | SetModuleConfigMessage
+    | DestroyMessage
+
+export interface RuntimeMessage {
+    message?: string
+    requestId?: number
+    command?: string
+    error?: string
+}
+
+export interface WorkletToMainMessage {
+    message: "COMMAND_OK" | "COMMAND_ERROR"
+    requestId?: number
+    command?: string
+    error?: string
+}
