@@ -1,7 +1,7 @@
 {
     "name": "@cc-livekit/denoise-plugin",
     "description": "A WebAssembly module implementing the RNNoise noise suppression library for web frontends.",
-    "version": "1.0.10",
+    "version": "1.0.48-local.20260224",
     "main": "./dist/index.cjs",
     "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
@@ -11,6 +11,7 @@
     },
     "scripts": {
         "build": "npm run build:dockerimage && npm run build:emscripten && npm run build:js",
+        "clean:dist": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
         "lint": "publint",
         "build:dockerimage": "docker image inspect -f '.' emscripten-autotools-4.0.4 || docker build -t emscripten-autotools-4.0.4 .",
         "build:emscripten": "docker run --rm -v $(pwd)/../:/src emscripten-autotools-4.0.4 bash -x ./js/build.sh",
@@ -18,11 +19,10 @@
         "build:deepfilter:artifacts": "node ./scripts/build-deepfilter-artifacts.mjs",
         "build:worklet": "webpack --config webpack.worklet.config.js",
         "build:rollup": " rollup -c rollup.config.cjs",
-        "build:js": "npm run build:deepfilter:artifacts && npm run build:worklet && npm run build:rollup"
+        "build:js": "npm run clean:dist && npm run build:deepfilter:artifacts && npm run build:worklet && npm run build:rollup"
     },
     "files": [
         "dist/DenoiserWorklet.js",
-        "dist/DenoiserWorker.js",
         "dist/index.js",
         "dist/index.cjs",
         "dist/index.umd.js",
@@ -37,6 +37,9 @@
             "import": "./dist/index.js",
             "require": "./dist/index.cjs",
             "default": "./dist/index.js"
+        },
+        "./DenoiserWorklet.js": {
+            "default": "./dist/DenoiserWorklet.js"
         }
     },
     "devDependencies": {

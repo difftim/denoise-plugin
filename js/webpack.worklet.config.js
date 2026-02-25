@@ -7,7 +7,6 @@ const __dirname = path.dirname(__filename)
 export default {
     entry: {
         DenoiserWorklet: "./src/DenoiserWorklet.ts",
-        DenoiserWorker: "./src/DenoiserWorker.ts",
     },
     output: {
         filename: "[name].js",

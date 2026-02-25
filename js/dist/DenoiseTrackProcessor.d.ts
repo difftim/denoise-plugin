@@ -6,6 +6,10 @@ interface DeepFilterRuntimeParams {
     attenLimDb?: number;
     postFilterBeta?: number;
 }
+export interface DeepFilterRuntimeConfig extends DeepFilterRuntimeParams {
+    modelUrl?: string;
+    modelBuffer?: ArrayBuffer;
+}
 export declare class DenoiseTrackProcessor implements TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> {
     private static readonly loadedContexts;
     private static readonly loadedWorkletUrls;
@@ -14,10 +18,11 @@ export declare class DenoiseTrackProcessor implements TrackProcessor<Track.Kind.
     private audioOpts?;
     private filterOpts?;
     private denoiseNode?;
-    private denoiseWorker?;
     private orgSourceNode?;
     private enabled;
-    private _sharedControlView?;
+    private _nextRequestId;
+    private _pendingCommands;
+    private _operationQueue;
     private readonly _handleRuntimeMessage;
     constructor(options?: DenoiseFilterOptions);
     static isSupported(): boolean;
@@ -28,20 +33,24 @@ export declare class DenoiseTrackProcessor implements TrackProcessor<Track.Kind.
     setEnabled(enable: boolean): Promise<void>;
     setEngine(engine: DenoiserEngine): Promise<void>;
     setDeepFilterParams(params: DeepFilterRuntimeParams): Promise<void>;
+    setDeepFilterConfig(config: DeepFilterRuntimeConfig): Promise<void>;
     isEnabled(): Promise<boolean>;
     destroy(): Promise<void>;
     _initInternal(opts: AudioProcessorOptions, restart: boolean): Promise<void>;
-    private _ensureSharedArrayBufferSupport;
-    private _setSharedEnabled;
-    private _requestSharedDestroy;
-    private _resolveWorkerURL;
-    private _derivePeerAssetURL;
+    private _runSerial;
+    private _sendCommand;
+    private _resolveCommand;
+    private _rejectCommand;
+    private _handleRuntimeLog;
+    private _rejectAllPendingCommands;
     private _getVadLogIntervalMs;
     private _getResolvedEngine;
     private _resolveDeepFilterOptions;
+    private _resolveModelUrl;
     private _resolveDeepFilterAttenLimDb;
     private _resolveDeepFilterPostFilterBeta;
     private _ensureFilterOptions;
+    private _fetchDeepFilterModel;
     _closeInternal(): void;
 }
 export {};
