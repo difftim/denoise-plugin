@@ -1,3 +1,7 @@
+import {
+    ConverterType,
+    create as createSampleRateConverter,
+} from "@alexanderolsen/libsamplerate-js"
 import type { DenoiseModuleId } from "./options"
 import {
     type MainToWorkletMessage,
@@ -21,8 +25,12 @@ import { DeepFilterModule, type DeepFilterRuntimeConfig } from "./worklet/module
 import { RnnoiseModule } from "./worklet/modules/RnnoiseModule"
 
 const QUANTUM_SAMPLES = 128
+const RESAMPLER_CONVERTER_TYPE = ConverterType.SRC_SINC_FASTEST
+const RESAMPLER_OUTPUT_FRAME_PADDING = 32
+const EMPTY_FLOAT32 = new Float32Array(0)
 
 type ActiveDenoiseModule = RnnoiseModule | DeepFilterModule
+type SampleRateConverter = Awaited<ReturnType<typeof createSampleRateConverter>>
 
 type PipelineStages = {
     denoise: DenoiseModuleId
@@ -106,6 +114,14 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     private _processingErrorReported = false
 
     private _sampleRate = REQUIRED_SAMPLE_RATE
+    private _resamplingEnabled = false
+    private _resamplerInputSampleRate = REQUIRED_SAMPLE_RATE
+    private _inputResampler?: SampleRateConverter
+    private _outputResampler?: SampleRateConverter
+    private _inputResampleBuffer = new Float32Array(0)
+    private _outputResampleBuffer = new Float32Array(0)
+    private _inputResampleOutLength = { frames: 0 }
+    private _outputResampleOutLength = { frames: 0 }
 
     private _stages: PipelineStages = {
         denoise: DEFAULT_DENOISE_MODULE,
@@ -140,8 +156,6 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     }
 
     process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
-        let inputFrames = 0
-
         try {
             if (this._destroyed) {
                 return false
@@ -152,45 +166,40 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
             const inputMono = input?.[0]
             const outputMono = output?.[0]
 
-            inputFrames = inputMono?.length ?? 0
-
             if (!inputMono || !outputMono) {
                 return true
             }
 
             if (!this._initialized || !this._denoiseModule || !this._shouldProcess) {
                 this._copyMonoToOutput(inputMono, output)
-                return true
-            }
-
-            this._inputQueue.push(inputMono)
-
-            while (
-                this._denoiseModule &&
-                this._inputQueue.framesAvailable >= this._denoiseModule.frameLength &&
-                this._inputQueue.pullMono(this._inputFrame)
-            ) {
-                const vadScore = this._denoiseModule.processFrame(
-                    this._inputFrame,
-                    this._outputFrame,
-                )
-                this._maybeEmitVadLog(vadScore)
-                this._outputQueue.push(this._outputFrame)
-            }
-
-            const pulled = this._outputQueue.pullMono(outputMono)
-            if (pulled) {
-                for (let channel = 1; channel < output.length; channel += 1) {
-                    output[channel].set(outputMono)
-                }
             } else {
-                this._copyMonoToOutput(inputMono, output)
+                const inputForModule = this._resampleInputIfNeeded(inputMono)
+                this._inputQueue.push(inputForModule)
+
+                while (
+                    this._denoiseModule &&
+                    this._inputQueue.framesAvailable >= this._denoiseModule.frameLength &&
+                    this._inputQueue.pullMono(this._inputFrame)
+                ) {
+                    const vadScore = this._denoiseModule.processFrame(
+                        this._inputFrame,
+                        this._outputFrame,
+                    )
+                    this._maybeEmitVadLog(vadScore)
+                    const outputForPlayback = this._resampleOutputIfNeeded(this._outputFrame)
+                    this._outputQueue.push(outputForPlayback)
+                }
+
+                if (this._outputQueue.pullMono(outputMono)) {
+                    for (let channel = 1; channel < output.length; channel += 1) {
+                        output[channel].set(outputMono)
+                    }
+                }
             }
 
             return true
         } catch (error) {
             this._reportProcessError(error)
-            this._copyMonoToOutput(inputs[0]?.[0] ?? new Float32Array(0), outputs[0] ?? [])
             return true
         }
     }
@@ -281,6 +290,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
         const candidate = this._createDenoiseModule(this._stages.denoise)
         this._swapDenoiseModule(candidate, this._stages.denoise)
+        await this._configureResampling(candidate.frameLength)
 
         this._setEnabled(payload.enable ?? this._shouldProcess)
 
@@ -315,6 +325,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
             const candidate = this._createDenoiseModule("rnnoise")
             this._swapDenoiseModule(candidate, "rnnoise")
+            await this._configureResampling(candidate.frameLength)
             return
         }
 
@@ -339,6 +350,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
         const candidate = this._createDenoiseModule("deepfilternet")
         this._swapDenoiseModule(candidate, "deepfilternet")
+        await this._configureResampling(candidate.frameLength)
     }
 
     private async _setModuleConfig(
@@ -410,6 +422,194 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         this._logInfo(enable ? "AUDIO_PIPELINE_ENABLED" : "AUDIO_PIPELINE_DISABLED")
     }
 
+    private async _configureResampling(moduleFrameLength: number): Promise<void> {
+        if (this._sampleRate === REQUIRED_SAMPLE_RATE) {
+            const wasEnabled = this._resamplingEnabled
+            this._destroyResamplers()
+            this._resamplingEnabled = false
+
+            if (wasEnabled) {
+                this._logInfo(
+                    "AUDIO_PIPELINE_RESAMPLING_DISABLED",
+                    {
+                        sampleRate: this._sampleRate,
+                    },
+                    true,
+                )
+            }
+
+            return
+        }
+
+        const needCreate =
+            !this._resamplingEnabled ||
+            !this._inputResampler ||
+            !this._outputResampler ||
+            this._resamplerInputSampleRate !== this._sampleRate
+
+        if (needCreate) {
+            this._destroyResamplers()
+
+            try {
+                this._inputResampler = await createSampleRateConverter(
+                    1,
+                    this._sampleRate,
+                    REQUIRED_SAMPLE_RATE,
+                    {
+                        converterType: RESAMPLER_CONVERTER_TYPE,
+                    },
+                )
+                this._outputResampler = await createSampleRateConverter(
+                    1,
+                    REQUIRED_SAMPLE_RATE,
+                    this._sampleRate,
+                    {
+                        converterType: RESAMPLER_CONVERTER_TYPE,
+                    },
+                )
+            } catch (error) {
+                this._destroyResamplers()
+                this._resamplingEnabled = false
+                throw new Error(
+                    `Failed to initialize sample-rate converters: ${error instanceof Error ? error.message : String(error)}`,
+                )
+            }
+
+            this._resamplingEnabled = true
+            this._resamplerInputSampleRate = this._sampleRate
+            this._logInfo(
+                "AUDIO_PIPELINE_RESAMPLING_ENABLED",
+                {
+                    inputSampleRate: this._sampleRate,
+                    processingSampleRate: REQUIRED_SAMPLE_RATE,
+                },
+                true,
+            )
+        }
+
+        this._ensureInputResampleBuffer(QUANTUM_SAMPLES)
+        this._ensureOutputResampleBuffer(moduleFrameLength)
+    }
+
+    private _destroyResamplers() {
+        if (this._inputResampler) {
+            this._inputResampler.destroy()
+            this._inputResampler = undefined
+        }
+
+        if (this._outputResampler) {
+            this._outputResampler.destroy()
+            this._outputResampler = undefined
+        }
+
+        this._inputResampleBuffer = EMPTY_FLOAT32
+        this._outputResampleBuffer = EMPTY_FLOAT32
+        this._inputResampleOutLength.frames = 0
+        this._outputResampleOutLength.frames = 0
+        this._resamplingEnabled = false
+        this._resamplerInputSampleRate = REQUIRED_SAMPLE_RATE
+    }
+
+    private _resampleInputIfNeeded(inputMono: Float32Array): Float32Array {
+        if (!this._resamplingEnabled || !this._inputResampler) {
+            return inputMono
+        }
+
+        this._ensureInputResampleBuffer(inputMono.length)
+        this._inputResampleOutLength.frames = 0
+
+        const resampled = this._inputResampler.full(
+            inputMono,
+            this._inputResampleBuffer,
+            this._inputResampleOutLength,
+        )
+        const outputFrames = this._inputResampleOutLength.frames
+        if (!Number.isFinite(outputFrames) || outputFrames <= 0) {
+            return EMPTY_FLOAT32
+        }
+
+        return resampled.subarray(0, outputFrames)
+    }
+
+    private _resampleOutputIfNeeded(moduleOutput: Float32Array): Float32Array {
+        if (!this._resamplingEnabled || !this._outputResampler) {
+            return moduleOutput
+        }
+
+        this._ensureOutputResampleBuffer(moduleOutput.length)
+        this._outputResampleOutLength.frames = 0
+
+        const resampled = this._outputResampler.full(
+            moduleOutput,
+            this._outputResampleBuffer,
+            this._outputResampleOutLength,
+        )
+        const outputFrames = this._outputResampleOutLength.frames
+        if (!Number.isFinite(outputFrames) || outputFrames <= 0) {
+            return EMPTY_FLOAT32
+        }
+
+        return resampled.subarray(0, outputFrames)
+    }
+
+    private _ensureInputResampleBuffer(inputFrames: number) {
+        if (!this._resamplingEnabled) {
+            return
+        }
+
+        const requiredFrames = this._estimateResampledFrames(
+            inputFrames,
+            this._sampleRate,
+            REQUIRED_SAMPLE_RATE,
+        )
+
+        if (this._inputResampleBuffer.length < requiredFrames) {
+            this._inputResampleBuffer = new Float32Array(requiredFrames)
+        }
+    }
+
+    private _ensureOutputResampleBuffer(inputFrames: number) {
+        if (!this._resamplingEnabled) {
+            return
+        }
+
+        const requiredFrames = this._estimateResampledFrames(
+            inputFrames,
+            REQUIRED_SAMPLE_RATE,
+            this._sampleRate,
+        )
+
+        if (this._outputResampleBuffer.length < requiredFrames) {
+            this._outputResampleBuffer = new Float32Array(requiredFrames)
+        }
+    }
+
+    private _estimateResampledFrames(
+        inputFrames: number,
+        fromSampleRate: number,
+        toSampleRate: number,
+    ): number {
+        if (
+            !Number.isFinite(inputFrames) ||
+            inputFrames <= 0 ||
+            !Number.isFinite(fromSampleRate) ||
+            fromSampleRate <= 0 ||
+            !Number.isFinite(toSampleRate) ||
+            toSampleRate <= 0
+        ) {
+            return 0
+        }
+
+        if (fromSampleRate === toSampleRate) {
+            return Math.ceil(inputFrames)
+        }
+
+        return (
+            Math.ceil((inputFrames * toSampleRate) / fromSampleRate) +
+            RESAMPLER_OUTPUT_FRAME_PADDING
+        )
+    }
+
     private _resolveSampleRate(sampleRateValue?: number): number {
         if (!Number.isFinite(sampleRateValue) || (sampleRateValue ?? 0) <= 0) {
             return REQUIRED_SAMPLE_RATE
@@ -457,11 +657,29 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     }
 
     private _resetQueues(frameLength: number) {
-        const queueCapacity = 64 * Math.max(frameLength, QUANTUM_SAMPLES)
+        const inputResampledQuantum = this._estimateResampledFrames(
+            QUANTUM_SAMPLES,
+            this._sampleRate,
+            REQUIRED_SAMPLE_RATE,
+        )
+        const outputResampledFrame = this._estimateResampledFrames(
+            frameLength,
+            REQUIRED_SAMPLE_RATE,
+            this._sampleRate,
+        )
+        const queueCapacity =
+            64 * Math.max(frameLength, QUANTUM_SAMPLES, inputResampledQuantum, outputResampledFrame)
         this._inputQueue = new MonoRingBuffer(queueCapacity)
         this._outputQueue = new MonoRingBuffer(queueCapacity)
         this._inputFrame = new Float32Array(frameLength)
         this._outputFrame = new Float32Array(frameLength)
+
+        this._logInfo("AUDIO_PIPELINE_WORKLET_RESET_QUEUES", {
+            frameLength,
+            inputResampledQuantum,
+            outputResampledFrame,
+            queueCapacity,
+        })
     }
 
     private _resetFlowState() {
@@ -479,7 +697,10 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
         this._denoiseModule?.dispose()
         this._denoiseModule = undefined
+        this._destroyResamplers()
+        this._resamplingEnabled = false
         this._resetQueues(QUANTUM_SAMPLES)
+        this._resetFlowState()
 
         this._logInfo("AUDIO_PIPELINE_WORKLET_DESTROYED")
     }
@@ -537,9 +758,12 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
         this._denoiseModule?.dispose()
         this._denoiseModule = undefined
+        this._destroyResamplers()
+        this._resamplingEnabled = false
         this._initialized = false
         this._shouldProcess = false
         this._resetQueues(QUANTUM_SAMPLES)
+        this._resetFlowState()
 
         if (!this._processingErrorReported) {
             this._processingErrorReported = true
@@ -554,19 +778,6 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
                 output[channel][index] = value
             }
         }
-    }
-
-    private _framesToMs(frames: number): number {
-        if (!Number.isFinite(frames) || frames <= 0) {
-            return 0
-        }
-
-        const sr =
-            typeof sampleRate === "number" && Number.isFinite(sampleRate) && sampleRate > 0
-                ? sampleRate
-                : REQUIRED_SAMPLE_RATE
-
-        return (frames / sr) * 1000
     }
 
     private _nowMs(): number {

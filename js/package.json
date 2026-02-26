@@ -64,7 +64,9 @@
             "url": "http://www.apache.org/licenses/LICENSE-2.0"
         }
     ],
-    "dependencies": {},
+    "dependencies": {
+        "@alexanderolsen/libsamplerate-js": "2.1.2"
+    },
     "publishConfig": {
         "access": "public"
     }

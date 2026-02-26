@@ -43,16 +43,17 @@ export interface DestroyMessage extends BaseMainToWorkletMessage {
     message: "DESTROY";
 }
 export type MainToWorkletMessage = InitPipelineMessage | SetEnabledMessage | SetStageModuleMessage | SetModuleConfigMessage | DestroyMessage;
-export interface RuntimeMessage {
-    message?: string;
+export interface CommandOkMessage {
+    message: "COMMAND_OK";
+    requestId?: number;
+    command?: string;
+}
+export interface CommandErrorMessage {
+    message: "COMMAND_ERROR";
     requestId?: number;
     command?: string;
     error?: string;
 }
-export interface WorkletToMainMessage {
-    message: "COMMAND_OK" | "COMMAND_ERROR";
-    requestId?: number;
-    command?: string;
-    error?: string;
-}
+export type WorkletToMainMessage = CommandOkMessage | CommandErrorMessage;
+export type RuntimeMessage = WorkletToMainMessage;
 export {};

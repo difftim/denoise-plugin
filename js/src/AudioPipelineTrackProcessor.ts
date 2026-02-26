@@ -68,10 +68,6 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
             this._rejectCommand(payload)
             return
         }
-
-        if (this._options.debugLogs) {
-            console.log(`[AudioPipelineRuntime][Worklet][${payload.message}]`)
-        }
     }
 
     constructor(options: AudioPipelineOptions) {
@@ -454,7 +450,7 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
         pending.resolve()
     }
 
-    private _rejectCommand(payload: RuntimeMessage) {
+    private _rejectCommand(payload: Extract<RuntimeMessage, { message: "COMMAND_ERROR" }>) {
         const requestId = payload.requestId
         const errorMessage =
             payload.error ?? `Runtime command failed: ${payload.command ?? "unknown"}`

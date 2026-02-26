@@ -54,4 +54,4 @@ await processor.setStageModule("denoise", "rnnoise")
 - `vadLogs` and `bufferOverflowMs` are `rnnoise`-only configs.
   - They are ignored by `deepfilternet`.
   - Updating rnnoise config while deepfilter is active is cached and applied when switching back to rnnoise.
-- If sample rate is not `48000`, runtime prints a warning and continues.
+- If sample rate is not `48000`, runtime auto-resamples (`input -> 48000 -> denoise -> original sample rate`).
