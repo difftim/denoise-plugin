@@ -16,7 +16,6 @@ interface BaseMainToWorkletMessage {
 }
 export interface InitPipelineMessage extends BaseMainToWorkletMessage {
     message: "INIT_PIPELINE";
-    sampleRate?: number;
     enable?: boolean;
     debugLogs?: boolean;
     stages?: {

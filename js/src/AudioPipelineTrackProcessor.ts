@@ -337,7 +337,6 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
         await this._sendCommand(
             {
                 message: "INIT_PIPELINE",
-                sampleRate: ctx.sampleRate,
                 enable: this.enabled,
                 debugLogs: this._options.debugLogs,
                 stages: {
