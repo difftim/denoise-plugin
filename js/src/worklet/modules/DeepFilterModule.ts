@@ -13,6 +13,7 @@ interface DeepFilterBindings {
     df_create_default: (attenLimDb: number) => number
     df_destroy: (state: number) => void
     df_get_frame_length: (state: number) => number
+    df_get_lookahead: (state: number) => number
     df_process_frame: (state: number, input: Float32Array) => Float32Array
     df_set_atten_lim: (state: number, limDb: number) => void
     df_set_post_filter_beta: (state: number, beta: number) => void
@@ -54,6 +55,7 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
     private readonly _bindings: DeepFilterBindings
     private _state = 0
     private _frameLength = 0
+    private _lookahead = 0
     private _disposed = false
 
     constructor(config: DeepFilterRuntimeConfig) {
@@ -68,6 +70,10 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
 
     get frameLength(): number {
         return this._frameLength
+    }
+
+    get lookahead(): number {
+        return this._lookahead
     }
 
     processFrame(input: Float32Array, output: Float32Array): number | undefined {
@@ -139,6 +145,7 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
         }
 
         this._frameLength = frameLength
+        this._lookahead = this._bindings.df_get_lookahead(this._state)
         this._bindings.df_set_atten_lim(this._state, config.attenLimDb)
         this._bindings.df_set_post_filter_beta(this._state, config.postFilterBeta)
     }

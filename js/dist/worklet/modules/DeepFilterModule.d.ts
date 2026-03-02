@@ -9,9 +9,11 @@ export declare class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeCon
     private readonly _bindings;
     private _state;
     private _frameLength;
+    private _lookahead;
     private _disposed;
     constructor(config: DeepFilterRuntimeConfig);
     get frameLength(): number;
+    get lookahead(): number;
     processFrame(input: Float32Array, output: Float32Array): number | undefined;
     updateConfig(config: DeepFilterRuntimeConfig): void;
     dispose(): void;

@@ -59,6 +59,13 @@ pub unsafe fn df_get_frame_length(st: *mut DFState) -> usize {
     state.0.hop_size
 }
 
+/// Get DeepFilterNet model lookahead in frames.
+#[wasm_bindgen]
+pub unsafe fn df_get_lookahead(st: *mut DFState) -> usize {
+    let state = st.as_mut().expect("Invalid pointer");
+    state.0.lookahead
+}
+
 /// Set DeepFilterNet attenuation limit.
 ///
 /// Args:

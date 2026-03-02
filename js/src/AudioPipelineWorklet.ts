@@ -377,7 +377,8 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         this._processingErrorReported = false
         this._lastVadLogAtMs = 0
 
-        this._resetQueues(module.frameLength)
+        const lookahead = module instanceof DeepFilterModule ? module.lookahead : 0
+        this._resetQueues(module.frameLength, lookahead)
         previous?.dispose()
 
         this._logInfo(`AUDIO_PIPELINE_STAGE_ACTIVE:denoise=${moduleId}`)
@@ -429,15 +430,21 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         }
     }
 
-    private _resetQueues(frameLength: number) {
+    private _resetQueues(frameLength: number, lookahead = 0) {
         const queueCapacity = 64 * Math.max(frameLength, QUANTUM_SAMPLES)
         this._inputQueue = new MonoRingBuffer(queueCapacity)
         this._outputQueue = new MonoRingBuffer(queueCapacity)
         this._inputFrame = new Float32Array(frameLength)
         this._outputFrame = new Float32Array(frameLength)
 
+        if (lookahead > 0) {
+            const prefillSamples = lookahead * frameLength
+            this._outputQueue.push(new Float32Array(prefillSamples))
+        }
+
         this._logInfo("AUDIO_PIPELINE_WORKLET_RESET_QUEUES", {
             frameLength,
+            lookahead,
             queueCapacity,
         })
     }
