@@ -5,8 +5,16 @@ use std::mem::MaybeUninit;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Once,
+    Arc, Mutex, Once, OnceLock,
 };
+
+/// Wrapper to allow `DfTract` (which is `!Send + !Sync`) to live in a global
+/// `Mutex`. In this demo the model is initialised on the main thread and then
+/// cloned into a single worker thread; no concurrent access ever occurs while
+/// the inner value is borrowed.
+struct SyncDfTract(Option<DfTract>);
+unsafe impl Send for SyncDfTract {}
+unsafe impl Sync for SyncDfTract {}
 use std::thread::{self, sleep, JoinHandle};
 use std::time::Duration;
 
@@ -29,8 +37,8 @@ pub type SendControl = Sender<(DfControl, f32)>;
 pub type RecvControl = Receiver<(DfControl, f32)>;
 
 pub(crate) static INIT_LOGGER: Once = Once::new();
-pub(crate) static mut MODEL_PATH: Option<PathBuf> = None;
-static mut MODEL: Option<DfTract> = None;
+pub(crate) static MODEL_PATH: OnceLock<PathBuf> = OnceLock::new();
+static MODEL: Mutex<SyncDfTract> = Mutex::new(SyncDfTract(None));
 
 const SAMPLE_FORMAT: cpal::SampleFormat = cpal::SampleFormat::F32;
 
@@ -56,14 +64,12 @@ pub enum DfControl {
 
 /// Initialize DF model and returns sample rate, frame size, and number of frequency bins
 fn init_df(model_path: Option<PathBuf>, channels: usize) -> (usize, usize, usize) {
-    unsafe {
-        if let Some(m) = MODEL.as_ref() {
-            if m.ch == channels {
-                return (m.sr, m.hop_size, m.n_freqs);
-            }
+    let mut guard = MODEL.lock().expect("MODEL lock poisoned");
+    if let Some(m) = guard.0.as_ref() {
+        if m.ch == channels {
+            return (m.sr, m.hop_size, m.n_freqs);
         }
     }
-    // let df_params = DfParams::default();
     let df_params = if let Some(path) = model_path {
         DfParams::new(path).expect("Failed to read DF model")
     } else {
@@ -72,13 +78,18 @@ fn init_df(model_path: Option<PathBuf>, channels: usize) -> (usize, usize, usize
     let r_params = RuntimeParams::default_with_ch(channels);
     let df = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime");
     let (sr, frame_size, freq_size) = (df.sr, df.hop_size, df.n_freqs);
-    unsafe { MODEL = Some(df) };
+    guard.0 = Some(df);
     (sr, frame_size, freq_size)
 }
 
-unsafe fn get_frame_size() -> usize {
-    let df = MODEL.clone().unwrap();
-    df.hop_size
+fn get_frame_size() -> usize {
+    MODEL
+        .lock()
+        .expect("MODEL lock poisoned")
+        .0
+        .as_ref()
+        .expect("MODEL not initialized")
+        .hop_size
 }
 
 #[derive(Clone, Copy)]
@@ -137,7 +148,7 @@ fn get_stream_config(
     for c in configs.iter() {
         if sr >= c.min_sample_rate() && sr <= c.max_sample_rate() {
             let mut c: StreamConfig = (*c).with_sample_rate(sr).into();
-            c.buffer_size = BufferSize::Fixed(unsafe { get_frame_size() } as u32);
+            c.buffer_size = BufferSize::Fixed(get_frame_size() as u32);
             return Some(c);
         }
     }
@@ -145,7 +156,7 @@ fn get_stream_config(
     if let Some(c) = configs.first() {
         let mut c: StreamConfig = (*c).with_max_sample_rate().into();
         c.buffer_size =
-            BufferSize::Fixed(unsafe { get_frame_size() } as u32 * c.sample_rate.0 / sample_rate);
+            BufferSize::Fixed(get_frame_size() as u32 * c.sample_rate.0 / sample_rate);
         log::warn!("Using best matching config {:?}", c);
         return Some(c);
     }
@@ -329,7 +340,13 @@ fn get_worker_fn(
         (None, None, None)
     };
     move || {
-        let mut df = unsafe { MODEL.clone().unwrap() };
+        let mut df = MODEL
+            .lock()
+            .expect("MODEL lock poisoned")
+            .0
+            .as_ref()
+            .expect("MODEL not initialized")
+            .clone();
         debug_assert_eq!(df.ch, 1); // Processing for more channels are not implemented yet
         let mut inframe = Array2::zeros((df.ch, df.hop_size));
         let mut outframe = inframe.clone();
@@ -538,10 +555,8 @@ pub fn main() -> Result<()> {
 
     let (lsnr_prod, mut lsnr_cons) = unbounded();
     let mut model_path = env::var("DF_MODEL").ok().map(PathBuf::from);
-    unsafe {
-        if model_path.is_none() && MODEL_PATH.is_some() {
-            model_path = MODEL_PATH.clone()
-        }
+    if model_path.is_none() {
+        model_path = MODEL_PATH.get().cloned();
     }
     if let Some(p) = model_path.as_ref() {
         log::info!("Running with model '{:?}'", p);

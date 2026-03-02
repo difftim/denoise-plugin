@@ -2,7 +2,7 @@ use std::env;
 use std::future::Future;
 use std::path::PathBuf;
 use std::process::exit;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -51,8 +51,8 @@ pub fn main() -> iced::Result {
         5 => log::LevelFilter::Debug,
         _ => log::LevelFilter::Trace,
     };
-    if args.model.is_some() {
-        unsafe { MODEL_PATH = args.model }
+    if let Some(path) = args.model {
+        let _ = MODEL_PATH.set(path);
     }
 
     capture::INIT_LOGGER.call_once(|| {
@@ -76,8 +76,8 @@ pub fn main() -> iced::Result {
     SpecView::run(Settings::default())
 }
 
-static mut SPEC_NOISY: Option<Arc<Mutex<SpecImage>>> = None;
-static mut SPEC_ENH: Option<Arc<Mutex<SpecImage>>> = None;
+static SPEC_NOISY: OnceLock<Arc<Mutex<SpecImage>>> = OnceLock::new();
+static SPEC_ENH: OnceLock<Arc<Mutex<SpecImage>>> = OnceLock::new();
 
 struct SpecView {
     df_worker: DeepFilterCapture,
@@ -187,14 +187,10 @@ impl Application for SpecView {
         let w = (df_worker.sr / df_worker.frame_size * 10) as u32;
         let freq_res = df_worker.sr / 2 / (df_worker.freq_size - 1);
         let h = (8000 / freq_res) as u32;
-        let (noisy_img, enh_img) = unsafe {
-            SPEC_NOISY = Some(Arc::new(Mutex::new(SpecImage::new(w, h, -100., -10.))));
-            SPEC_ENH = Some(Arc::new(Mutex::new(SpecImage::new(w, h, -100., -10.))));
-            (
-                SPEC_NOISY.as_ref().unwrap().lock().unwrap().image_handle(),
-                SPEC_ENH.as_ref().unwrap().lock().unwrap().image_handle(),
-            )
-        };
+        let _ = SPEC_NOISY.set(Arc::new(Mutex::new(SpecImage::new(w, h, -100., -10.))));
+        let _ = SPEC_ENH.set(Arc::new(Mutex::new(SpecImage::new(w, h, -100., -10.))));
+        let noisy_img = SPEC_NOISY.get().unwrap().lock().unwrap().image_handle();
+        let enh_img = SPEC_ENH.get().unwrap().lock().unwrap().image_handle();
         (
             Self {
                 df_worker,
@@ -245,24 +241,20 @@ impl Application for SpecView {
             }
             Message::LsnrChanged(lsnr) => self.lsnr = lsnr,
             Message::NoisyChanged => {
-                self.noisy_img = unsafe {
-                    SPEC_NOISY
-                        .as_ref()
-                        .unwrap()
-                        .lock()
-                        .expect("Failed to lock SPEC_NOISY")
-                        .image_handle()
-                };
+                self.noisy_img = SPEC_NOISY
+                    .get()
+                    .unwrap()
+                    .lock()
+                    .expect("Failed to lock SPEC_NOISY")
+                    .image_handle();
             }
             Message::EnhChanged => {
-                self.enh_img = unsafe {
-                    SPEC_ENH
-                        .as_ref()
-                        .unwrap()
-                        .lock()
-                        .expect("Failed to lock SPEC_ENH")
-                        .image_handle()
-                };
+                self.enh_img = SPEC_ENH
+                    .get()
+                    .unwrap()
+                    .lock()
+                    .expect("Failed to lock SPEC_ENH")
+                    .image_handle();
             }
             Message::AttenLimChanged(v) => {
                 self.atten_lim = v;
@@ -298,7 +290,7 @@ impl Application for SpecView {
         Command::none()
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         let content = column![row![
             text("DeepFilterNet Demo").size(40).width(Length::Fill),
             button("exit").on_press(Message::Exit)
@@ -416,11 +408,12 @@ impl SpecView {
         let recv = self.r_noisy.clone();
         Some(async move {
             let n = recv.len();
-            unsafe {
-                let mut spec =
-                    SPEC_NOISY.as_mut().unwrap().lock().expect("Failed to lock SPEC_NOISY");
-                spec.update(recv.iter().take(n), n);
-            }
+            let mut spec = SPEC_NOISY
+                .get()
+                .unwrap()
+                .lock()
+                .expect("Failed to lock SPEC_NOISY");
+            spec.update(recv.iter().take(n), n);
             Message::NoisyChanged
         })
     }
@@ -432,14 +425,16 @@ impl SpecView {
         let recv = self.r_enh.clone();
         Some(async move {
             let n = recv.len();
-            unsafe {
-                let mut spec = SPEC_ENH.as_mut().unwrap().lock().expect("Failed to lock SPEC_ENH");
-                spec.update(recv.iter().take(n), n);
-            }
+            let mut spec = SPEC_ENH
+                .get()
+                .unwrap()
+                .lock()
+                .expect("Failed to lock SPEC_ENH");
+            spec.update(recv.iter().take(n), n);
             Message::EnhChanged
         })
     }
-    fn specs(&self) -> Container<Message> {
+    fn specs(&self) -> Container<'_, Message> {
         container(column![
             spec_view("Noisy", self.noisy_img.clone(), 1000, 250),
             spec_view("DeepFilterNet Enhanced", self.enh_img.clone(), 1000, 250),
@@ -447,7 +442,7 @@ impl SpecView {
     }
 }
 
-fn spec_view(title: &str, im: image::Handle, width: u16, height: u16) -> Element<Message> {
+fn spec_view<'a>(title: &'a str, im: image::Handle, width: u16, height: u16) -> Element<'a, Message> {
     column![
         text(title).size(24).width(Length::Fill),
         spec_raw(im, width, height)
