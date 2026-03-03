@@ -1,3 +1,4 @@
+import { cloneBytes, sameBytes } from "../../shared/normalize"
 import { DenoiseModule } from "./DenoiseModule"
 import createDeepFilterWasmModuleSync from "../../dist/deepfilter-sync.js"
 
@@ -19,36 +20,6 @@ interface DeepFilterBindings {
     df_set_post_filter_beta: (state: number, beta: number) => void
 }
 
-function sameModelBytes(left?: Uint8Array, right?: Uint8Array): boolean {
-    if (!left && !right) {
-        return true
-    }
-
-    if (!left || !right) {
-        return false
-    }
-
-    if (left.byteLength !== right.byteLength) {
-        return false
-    }
-
-    for (let index = 0; index < left.byteLength; index += 1) {
-        if (left[index] !== right[index]) {
-            return false
-        }
-    }
-
-    return true
-}
-
-function cloneModelBytes(bytes?: Uint8Array): Uint8Array | undefined {
-    if (!bytes) {
-        return undefined
-    }
-
-    return bytes.slice(0)
-}
-
 export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
     readonly moduleId = "deepfilternet"
 
@@ -61,7 +32,7 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
     constructor(config: DeepFilterRuntimeConfig) {
         super({
             ...config,
-            modelBytes: cloneModelBytes(config.modelBytes),
+            modelBytes: cloneBytes(config.modelBytes),
         })
 
         this._bindings = createDeepFilterWasmModuleSync() as DeepFilterBindings
@@ -91,10 +62,10 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
     updateConfig(config: DeepFilterRuntimeConfig): void {
         const next = {
             ...config,
-            modelBytes: cloneModelBytes(config.modelBytes),
+            modelBytes: cloneBytes(config.modelBytes),
         }
 
-        const modelChanged = !sameModelBytes(this._config.modelBytes, next.modelBytes)
+        const modelChanged = !sameBytes(this._config.modelBytes, next.modelBytes)
         this._config = next
 
         if (modelChanged) {
@@ -107,25 +78,22 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
     }
 
     dispose(): void {
-        if (this._disposed) {
-            return
-        }
+        if (this._disposed) return
 
         this._disposed = true
-
         if (this._state) {
             this._bindings.df_destroy(this._state)
             this._state = 0
         }
     }
 
-    private _createState(config: DeepFilterRuntimeConfig) {
+    private _createState(config: DeepFilterRuntimeConfig): void {
         if (this._state) {
             this._bindings.df_destroy(this._state)
             this._state = 0
         }
 
-        const modelBytes = cloneModelBytes(config.modelBytes)
+        const modelBytes = cloneBytes(config.modelBytes)
 
         if (modelBytes) {
             this._state = this._bindings.df_create(modelBytes, config.attenLimDb)

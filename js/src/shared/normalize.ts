@@ -38,6 +38,21 @@ export function cloneArrayBuffer(buffer: ArrayBuffer): ArrayBuffer {
     return buffer.slice(0)
 }
 
+export function cloneBytes(bytes?: Uint8Array): Uint8Array | undefined {
+    return bytes ? bytes.slice(0) : undefined
+}
+
+export function sameBytes(left?: Uint8Array, right?: Uint8Array): boolean {
+    if (left === right) return true
+    if (!left || !right) return false
+    if (left.byteLength !== right.byteLength) return false
+
+    for (let i = 0; i < left.byteLength; i += 1) {
+        if (left[i] !== right[i]) return false
+    }
+    return true
+}
+
 export function normalizeModelUrl(value?: string): string | undefined {
     if (typeof value !== "string") {
         return undefined
@@ -148,6 +163,66 @@ export function mergeDeepFilterConfig(
     return {
         modelUrl,
         modelBuffer,
+        attenLimDb:
+            patch.attenLimDb !== undefined
+                ? resolveDeepFilterAttenLimDb(patch.attenLimDb)
+                : base.attenLimDb,
+        postFilterBeta:
+            patch.postFilterBeta !== undefined
+                ? resolveDeepFilterPostFilterBeta(patch.postFilterBeta)
+                : base.postFilterBeta,
+    }
+}
+
+export interface WorkletDeepFilterState {
+    modelUrl?: string
+    modelBytes?: Uint8Array
+    attenLimDb: number
+    postFilterBeta: number
+}
+
+export function defaultWorkletDeepFilterState(): WorkletDeepFilterState {
+    return {
+        modelUrl: undefined,
+        modelBytes: undefined,
+        attenLimDb: DEFAULT_DF_ATTEN_LIM_DB,
+        postFilterBeta: DEFAULT_DF_POST_FILTER_BETA,
+    }
+}
+
+export function mergeWorkletDeepFilterState(
+    base: WorkletDeepFilterState,
+    patch?: {
+        modelUrl?: string
+        modelBuffer?: ArrayBuffer
+        clearModel?: boolean
+        attenLimDb?: number
+        postFilterBeta?: number
+    },
+): WorkletDeepFilterState {
+    if (!patch) return { ...base, modelBytes: cloneBytes(base.modelBytes) }
+
+    let modelUrl = normalizeModelUrl(base.modelUrl)
+    let modelBytes = cloneBytes(base.modelBytes)
+
+    if (patch.clearModel === true) {
+        modelUrl = undefined
+        modelBytes = undefined
+    }
+    if (patch.modelUrl !== undefined) {
+        modelUrl = normalizeModelUrl(patch.modelUrl)
+        modelBytes = undefined
+    }
+    if (patch.modelBuffer !== undefined) {
+        if (patch.modelBuffer.byteLength <= 0) {
+            throw new Error("DeepFilter modelBuffer is empty")
+        }
+        modelBytes = new Uint8Array(patch.modelBuffer.slice(0))
+    }
+
+    return {
+        modelUrl,
+        modelBytes,
         attenLimDb:
             patch.attenLimDb !== undefined
                 ? resolveDeepFilterAttenLimDb(patch.attenLimDb)

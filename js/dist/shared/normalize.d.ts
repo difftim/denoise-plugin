@@ -25,6 +25,8 @@ export interface ResolvedAudioPipelineOptions {
     };
 }
 export declare function cloneArrayBuffer(buffer: ArrayBuffer): ArrayBuffer;
+export declare function cloneBytes(bytes?: Uint8Array): Uint8Array | undefined;
+export declare function sameBytes(left?: Uint8Array, right?: Uint8Array): boolean;
 export declare function normalizeModelUrl(value?: string): string | undefined;
 export declare function resolveDenoiseModule(moduleId?: DenoiseModuleId): DenoiseModuleId;
 export declare function resolveDeepFilterAttenLimDb(value?: number): number;
@@ -33,4 +35,18 @@ export declare function normalizeRnnoiseConfig(config?: RnnoiseModuleConfig): Re
 export declare function mergeRnnoiseConfig(base: ResolvedRnnoiseModuleConfig, patch?: RnnoiseModuleConfig): ResolvedRnnoiseModuleConfig;
 export declare function normalizeDeepFilterConfig(config?: DeepFilterModuleConfig): ResolvedDeepFilterModuleConfig;
 export declare function mergeDeepFilterConfig(base: ResolvedDeepFilterModuleConfig, patch?: DeepFilterModuleConfig): ResolvedDeepFilterModuleConfig;
+export interface WorkletDeepFilterState {
+    modelUrl?: string;
+    modelBytes?: Uint8Array;
+    attenLimDb: number;
+    postFilterBeta: number;
+}
+export declare function defaultWorkletDeepFilterState(): WorkletDeepFilterState;
+export declare function mergeWorkletDeepFilterState(base: WorkletDeepFilterState, patch?: {
+    modelUrl?: string;
+    modelBuffer?: ArrayBuffer;
+    clearModel?: boolean;
+    attenLimDb?: number;
+    postFilterBeta?: number;
+}): WorkletDeepFilterState;
 export declare function normalizeAudioPipelineOptions(options: AudioPipelineOptions): ResolvedAudioPipelineOptions;

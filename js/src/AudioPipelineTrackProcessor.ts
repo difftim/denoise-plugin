@@ -11,7 +11,6 @@ import type {
     MainToWorkletMessage,
     RuntimeMessage,
     WorkletDeepFilterConfigPayload,
-    WorkletRnnoiseConfigPayload,
 } from "./shared/contracts"
 import { COMMAND_TIMEOUT_MS } from "./shared/contracts"
 import {
@@ -24,7 +23,7 @@ import {
     type ResolvedDeepFilterModuleConfig,
 } from "./shared/normalize"
 
-export interface PendingCommand {
+interface PendingCommand {
     command: string
     timeoutId: ReturnType<typeof setTimeout>
     resolve: () => void
@@ -35,40 +34,22 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
     Track.Kind.Audio,
     AudioProcessorOptions
 > {
-    private static readonly loadedContexts = new WeakSet<BaseAudioContext>()
-    private static readonly loadedWorkletUrls = new WeakMap<BaseAudioContext, string>()
+    private static readonly _loadedContexts = new WeakSet<BaseAudioContext>()
+    private static readonly _loadedWorkletUrls = new WeakMap<BaseAudioContext, string>()
 
     readonly name = "audio-pipeline-filter"
     processedTrack?: MediaStreamTrack | undefined
 
-    private audioOpts?: AudioProcessorOptions | undefined
-    private denoiseNode?: AudioWorkletNode | undefined
-    private orgSourceNode?: MediaStreamAudioSourceNode | undefined
+    private _audioOpts?: AudioProcessorOptions | undefined
+    private _workletNode?: AudioWorkletNode | undefined
+    private _sourceNode?: MediaStreamAudioSourceNode | undefined
 
-    private enabled = true
-
+    private _enabled = true
     private _options: ResolvedAudioPipelineOptions
 
     private _nextRequestId = 1
     private _pendingCommands = new Map<number, PendingCommand>()
     private _operationQueue: Promise<void> = Promise.resolve()
-
-    private readonly _handleRuntimeMessage = (event: MessageEvent<RuntimeMessage>) => {
-        const payload = event.data
-        if (!payload?.message) {
-            return
-        }
-
-        if (payload.message === "COMMAND_OK") {
-            this._resolveCommand(payload.requestId)
-            return
-        }
-
-        if (payload.message === "COMMAND_ERROR") {
-            this._rejectCommand(payload)
-            return
-        }
-    }
 
     constructor(options: AudioPipelineOptions) {
         this._options = normalizeAudioPipelineOptions(options)
@@ -79,48 +60,31 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
     }
 
     async init(opts: AudioProcessorOptions): Promise<void> {
-        if (this._options.debugLogs) {
-            console.log("AudioPipelineTrackProcessor.init", opts)
-        }
-
+        this._debug("init", opts)
         await this._initInternal(opts, false)
     }
 
     async restart(opts: AudioProcessorOptions): Promise<void> {
-        opts.audioContext = opts.audioContext ?? this.audioOpts?.audioContext
-
-        if (this._options.debugLogs) {
-            console.log("AudioPipelineTrackProcessor.restart", opts)
-        }
-
+        opts.audioContext = opts.audioContext ?? this._audioOpts?.audioContext
+        this._debug("restart", opts)
         await this._initInternal(opts, true)
     }
 
     async onPublish(room: Room): Promise<void> {
-        if (this._options.debugLogs) {
-            console.log("AudioPipelineTrackProcessor.onPublish", room.name)
-        }
+        this._debug("onPublish", room.name)
     }
 
     async onUnpublish(): Promise<void> {
-        if (this._options.debugLogs) {
-            console.log("AudioPipelineTrackProcessor.onUnpublish")
-        }
+        this._debug("onUnpublish")
     }
 
     async setEnabled(enable: boolean): Promise<void> {
         return this._runSerial(async () => {
-            if (this._options.debugLogs) {
-                console.log("AudioPipelineTrackProcessor.setEnabled", enable)
-            }
+            this._debug("setEnabled", enable)
+            this._enabled = enable
 
-            this.enabled = enable
-
-            if (this.denoiseNode) {
-                await this._sendCommand({
-                    message: "SET_ENABLED",
-                    enable,
-                })
+            if (this._workletNode) {
+                await this._sendCommand({ message: "SET_ENABLED", enable })
             }
         })
     }
@@ -132,34 +96,11 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
             }
 
             const nextModuleId = resolveDenoiseModule(moduleId)
-            if (this._options.stages.denoise === nextModuleId) {
-                return
-            }
+            if (this._options.stages.denoise === nextModuleId) return
 
-            let configPayload: WorkletRnnoiseConfigPayload | WorkletDeepFilterConfigPayload
-            let transferables: Transferable[] | undefined
+            const { configPayload, transferables } = await this._buildModulePayload(nextModuleId)
 
-            if (nextModuleId === "deepfilternet") {
-                const deepConfig = this._options.moduleConfigs.deepfilternet
-                const modelBuffer = await this._resolveDeepFilterModelBuffer(deepConfig)
-                configPayload = {
-                    attenLimDb: deepConfig.attenLimDb,
-                    postFilterBeta: deepConfig.postFilterBeta,
-                    modelBuffer,
-                }
-                transferables = modelBuffer ? [modelBuffer] : undefined
-
-                if (modelBuffer) {
-                    this._options.moduleConfigs.deepfilternet.modelBuffer =
-                        cloneArrayBuffer(modelBuffer)
-                }
-            } else {
-                configPayload = {
-                    ...this._options.moduleConfigs.rnnoise,
-                }
-            }
-
-            if (this.denoiseNode) {
+            if (this._workletNode) {
                 await this._sendCommand(
                     {
                         message: "SET_STAGE_MODULE",
@@ -183,43 +124,66 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
     ): Promise<void> {
         return this._runSerial(async () => {
             if (moduleId === "rnnoise") {
-                await this._setRnnoiseConfig(config as RnnoiseModuleConfig)
-                return
+                await this._applyRnnoiseConfig(config as RnnoiseModuleConfig)
+            } else {
+                await this._applyDeepFilterConfig(config as DeepFilterModuleConfig)
             }
-
-            await this._setDeepFilterConfig(config as DeepFilterModuleConfig)
         })
     }
 
     async isEnabled(): Promise<boolean> {
-        return Boolean(this.denoiseNode && this.enabled)
+        return Boolean(this._workletNode && this._enabled)
     }
 
     async destroy(): Promise<void> {
-        if (this._options.debugLogs) {
-            console.log("AudioPipelineTrackProcessor.destroy")
-        }
-
+        this._debug("destroy")
         this._closeInternal()
     }
 
-    private async _setRnnoiseConfig(config: RnnoiseModuleConfig): Promise<void> {
+    // ── Module config application ──────────────────────────────────
+
+    private async _buildModulePayload(moduleId: DenoiseModuleId): Promise<{
+        configPayload: Record<string, unknown>
+        transferables?: Transferable[]
+    }> {
+        if (moduleId === "rnnoise") {
+            return {
+                configPayload: { ...this._options.moduleConfigs.rnnoise },
+            }
+        }
+
+        const deepConfig = this._options.moduleConfigs.deepfilternet
+        const modelBuffer = await this._resolveModelBuffer(deepConfig)
+
+        if (modelBuffer) {
+            this._options.moduleConfigs.deepfilternet.modelBuffer = cloneArrayBuffer(modelBuffer)
+        }
+
+        return {
+            configPayload: {
+                attenLimDb: deepConfig.attenLimDb,
+                postFilterBeta: deepConfig.postFilterBeta,
+                modelBuffer,
+            },
+            transferables: modelBuffer ? [modelBuffer] : undefined,
+        }
+    }
+
+    private async _applyRnnoiseConfig(config: RnnoiseModuleConfig): Promise<void> {
         const nextConfig = mergeRnnoiseConfig(this._options.moduleConfigs.rnnoise, config)
 
-        if (this.denoiseNode) {
+        if (this._workletNode) {
             await this._sendCommand({
                 message: "SET_MODULE_CONFIG",
                 moduleId: "rnnoise",
-                config: {
-                    ...nextConfig,
-                },
+                config: { ...nextConfig },
             })
         }
 
         this._options.moduleConfigs.rnnoise = nextConfig
     }
 
-    private async _setDeepFilterConfig(config: DeepFilterModuleConfig): Promise<void> {
+    private async _applyDeepFilterConfig(config: DeepFilterModuleConfig): Promise<void> {
         const nextConfig = mergeDeepFilterConfig(this._options.moduleConfigs.deepfilternet, config)
 
         let modelBuffer: ArrayBuffer | undefined
@@ -229,12 +193,11 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
             if (config.modelBuffer.byteLength <= 0) {
                 throw new Error("DeepFilter modelBuffer is empty")
             }
-
             modelBuffer = cloneArrayBuffer(config.modelBuffer)
             nextConfig.modelBuffer = cloneArrayBuffer(modelBuffer)
         } else if (config.modelUrl !== undefined) {
             if (nextConfig.modelUrl) {
-                modelBuffer = await this._fetchDeepFilterModel(nextConfig.modelUrl)
+                modelBuffer = await this._fetchModel(nextConfig.modelUrl)
                 nextConfig.modelBuffer = cloneArrayBuffer(modelBuffer)
             } else {
                 clearModel = true
@@ -245,7 +208,7 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
             nextConfig.modelBuffer = undefined
         }
 
-        if (this.denoiseNode) {
+        if (this._workletNode) {
             const payload: WorkletDeepFilterConfigPayload = {
                 attenLimDb: nextConfig.attenLimDb,
                 postFilterBeta: nextConfig.postFilterBeta,
@@ -254,11 +217,7 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
             }
 
             await this._sendCommand(
-                {
-                    message: "SET_MODULE_CONFIG",
-                    moduleId: "deepfilternet",
-                    config: payload,
-                },
+                { message: "SET_MODULE_CONFIG", moduleId: "deepfilternet", config: payload },
                 modelBuffer ? [modelBuffer] : undefined,
             )
         }
@@ -266,68 +225,34 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
         this._options.moduleConfigs.deepfilternet = nextConfig
     }
 
+    // ── Init / teardown ────────────────────────────────────────────
+
     private async _initInternal(opts: AudioProcessorOptions, restart: boolean): Promise<void> {
-        if (!opts || !opts.audioContext || !opts.track) {
+        if (!opts?.audioContext || !opts.track) {
             throw new Error("audioContext and track are required")
         }
 
-        if (restart) {
-            this._closeInternal()
-        }
+        if (restart) this._closeInternal()
 
-        this.audioOpts = opts
-        const ctx = this.audioOpts.audioContext
+        this._audioOpts = opts
+        const ctx = opts.audioContext
 
-        const workletUrl = this._options.workletUrl
-        if (!workletUrl) {
-            throw new Error(
-                "workletUrl is required. Pass AudioPipelineTrackProcessor({ workletUrl }).",
-            )
-        }
+        await this._ensureWorkletLoaded(ctx)
 
-        let resolvedWorkletUrl = AudioPipelineTrackProcessor.loadedWorkletUrls.get(ctx)
-
-        if (!AudioPipelineTrackProcessor.loadedContexts.has(ctx)) {
-            if (this._options.debugLogs) {
-                console.log("AudioPipelineWorkletURL:", workletUrl)
-            }
-
-            try {
-                await ctx.audioWorklet.addModule(workletUrl)
-                AudioPipelineTrackProcessor.loadedContexts.add(ctx)
-                AudioPipelineTrackProcessor.loadedWorkletUrls.set(ctx, workletUrl)
-                resolvedWorkletUrl = workletUrl
-            } catch (error) {
-                throw new Error(
-                    `Failed to load audio pipeline worklet module: ${String(error)}. URL: ${workletUrl}`,
-                )
-            }
-        } else if (!resolvedWorkletUrl) {
-            resolvedWorkletUrl = workletUrl
-            AudioPipelineTrackProcessor.loadedWorkletUrls.set(ctx, workletUrl)
-        }
-
-        if (this._options.debugLogs) {
-            console.log("AudioPipelineWorkletResolvedURL:", resolvedWorkletUrl)
-        }
-
-        this.denoiseNode = new AudioWorkletNode(ctx, "AudioPipelineWorklet", {
+        this._workletNode = new AudioWorkletNode(ctx, "AudioPipelineWorklet", {
             processorOptions: {
                 debugLogs: this._options.debugLogs,
-                numberOfChannels: this.audioOpts.track.getSettings().channelCount,
+                numberOfChannels: opts.track.getSettings().channelCount,
             },
         })
-        this.denoiseNode.port.onmessage = this._handleRuntimeMessage
+        this._workletNode.port.onmessage = this._handleRuntimeMessage
 
-        const currentDenoiseModule = this._options.stages.denoise
-        const rnnoisePayload: WorkletRnnoiseConfigPayload = {
-            ...this._options.moduleConfigs.rnnoise,
-        }
+        const currentModule = this._options.stages.denoise
+        const deepConfig = this._options.moduleConfigs.deepfilternet
 
-        const deepFilterConfig = this._options.moduleConfigs.deepfilternet
         let initModelBuffer: ArrayBuffer | undefined
-        if (currentDenoiseModule === "deepfilternet") {
-            initModelBuffer = await this._resolveDeepFilterModelBuffer(deepFilterConfig)
+        if (currentModule === "deepfilternet") {
+            initModelBuffer = await this._resolveModelBuffer(deepConfig)
             if (initModelBuffer) {
                 this._options.moduleConfigs.deepfilternet.modelBuffer =
                     cloneArrayBuffer(initModelBuffer)
@@ -337,16 +262,14 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
         await this._sendCommand(
             {
                 message: "INIT_PIPELINE",
-                enable: this.enabled,
+                enable: this._enabled,
                 debugLogs: this._options.debugLogs,
-                stages: {
-                    denoise: currentDenoiseModule,
-                },
+                stages: { denoise: currentModule },
                 moduleConfigs: {
-                    rnnoise: rnnoisePayload,
+                    rnnoise: { ...this._options.moduleConfigs.rnnoise },
                     deepfilternet: {
-                        attenLimDb: deepFilterConfig.attenLimDb,
-                        postFilterBeta: deepFilterConfig.postFilterBeta,
+                        attenLimDb: deepConfig.attenLimDb,
+                        postFilterBeta: deepConfig.postFilterBeta,
                         modelBuffer: initModelBuffer,
                     },
                 },
@@ -354,33 +277,93 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
             initModelBuffer ? [initModelBuffer] : undefined,
         )
 
-        this.orgSourceNode = ctx.createMediaStreamSource(new MediaStream([this.audioOpts.track]))
-        this.orgSourceNode.connect(this.denoiseNode)
+        this._sourceNode = ctx.createMediaStreamSource(new MediaStream([opts.track]))
+        this._sourceNode.connect(this._workletNode)
 
         const destination = ctx.createMediaStreamDestination()
-        this.denoiseNode.connect(destination)
-
+        this._workletNode.connect(destination)
         this.processedTrack = destination.stream.getAudioTracks()[0]
 
-        if (this._options.debugLogs) {
-            console.log(
-                `AudioPipelineTrackProcessor.init: sourceID: ${this.audioOpts.track.id}, newTrackID: ${this.processedTrack.id}`,
+        this._debug(
+            "init complete",
+            `sourceID: ${opts.track.id}, newTrackID: ${this.processedTrack.id}`,
+        )
+    }
+
+    private async _ensureWorkletLoaded(ctx: BaseAudioContext): Promise<void> {
+        const workletUrl = this._options.workletUrl
+        if (!workletUrl) {
+            throw new Error(
+                "workletUrl is required. Pass AudioPipelineTrackProcessor({ workletUrl }).",
+            )
+        }
+
+        if (AudioPipelineTrackProcessor._loadedContexts.has(ctx)) return
+
+        this._debug("loading worklet", workletUrl)
+
+        try {
+            await ctx.audioWorklet.addModule(workletUrl)
+            AudioPipelineTrackProcessor._loadedContexts.add(ctx)
+            AudioPipelineTrackProcessor._loadedWorkletUrls.set(ctx, workletUrl)
+        } catch (error) {
+            throw new Error(
+                `Failed to load audio pipeline worklet module: ${String(error)}. URL: ${workletUrl}`,
             )
         }
     }
 
-    private async _resolveDeepFilterModelBuffer(
+    private _closeInternal(): void {
+        if (this._workletNode) {
+            try {
+                this._workletNode.port.postMessage({ message: "DESTROY" })
+            } catch {
+                // Ignore postMessage errors during teardown.
+            }
+            this._workletNode.port.onmessage = null
+        }
+
+        this._rejectAllPendingCommands("Audio pipeline runtime closed")
+
+        this._workletNode?.disconnect()
+        this._sourceNode?.disconnect()
+
+        this._workletNode = undefined
+        this._sourceNode = undefined
+        this.processedTrack = undefined
+    }
+
+    // ── Model helpers ──────────────────────────────────────────────
+
+    private async _resolveModelBuffer(
         config: ResolvedDeepFilterModuleConfig,
     ): Promise<ArrayBuffer | undefined> {
-        if (config.modelBuffer) {
-            return cloneArrayBuffer(config.modelBuffer)
-        }
+        if (config.modelBuffer) return cloneArrayBuffer(config.modelBuffer)
+        if (!config.modelUrl) return undefined
+        return this._fetchModel(config.modelUrl)
+    }
 
-        if (!config.modelUrl) {
-            return undefined
+    private async _fetchModel(modelUrl: string): Promise<ArrayBuffer> {
+        const response = await fetch(modelUrl)
+        if (!response.ok) {
+            throw new Error(
+                `Failed to fetch DeepFilter model: ${response.status} ${response.statusText}`,
+            )
         }
+        return response.arrayBuffer()
+    }
 
-        return this._fetchDeepFilterModel(config.modelUrl)
+    // ── Command transport ──────────────────────────────────────────
+
+    private readonly _handleRuntimeMessage = (event: MessageEvent<RuntimeMessage>): void => {
+        const payload = event.data
+        if (!payload?.message) return
+
+        if (payload.message === "COMMAND_OK") {
+            this._resolvePending(payload.requestId)
+        } else if (payload.message === "COMMAND_ERROR") {
+            this._rejectPending(payload)
+        }
     }
 
     private _runSerial<T>(operation: () => Promise<T>): Promise<T> {
@@ -396,12 +379,11 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
         message: MainToWorkletMessage,
         transferables?: Transferable[],
     ): Promise<void> {
-        if (!this.denoiseNode) {
+        if (!this._workletNode) {
             throw new Error("Audio pipeline worklet is not initialized")
         }
 
-        const requestId = this._nextRequestId
-        this._nextRequestId += 1
+        const requestId = this._nextRequestId++
 
         await new Promise<void>((resolve, reject) => {
             const timeoutId = setTimeout(() => {
@@ -419,13 +401,7 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
             })
 
             try {
-                this.denoiseNode?.port.postMessage(
-                    {
-                        ...message,
-                        requestId,
-                    },
-                    transferables ?? [],
-                )
+                this._workletNode?.port.postMessage({ ...message, requestId }, transferables ?? [])
             } catch (error) {
                 clearTimeout(timeoutId)
                 this._pendingCommands.delete(requestId)
@@ -434,83 +410,54 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
         })
     }
 
-    private _resolveCommand(requestId?: number) {
-        if (requestId === undefined) {
-            return
-        }
+    private _resolvePending(requestId?: number): void {
+        if (requestId === undefined) return
 
         const pending = this._pendingCommands.get(requestId)
-        if (!pending) {
-            return
-        }
+        if (!pending) return
 
         clearTimeout(pending.timeoutId)
         this._pendingCommands.delete(requestId)
         pending.resolve()
     }
 
-    private _rejectCommand(payload: Extract<RuntimeMessage, { message: "COMMAND_ERROR" }>) {
-        const requestId = payload.requestId
+    private _rejectPending(payload: Extract<RuntimeMessage, { message: "COMMAND_ERROR" }>): void {
         const errorMessage =
             payload.error ?? `Runtime command failed: ${payload.command ?? "unknown"}`
 
-        if (requestId === undefined) {
-            if (this._options.debugLogs) {
-                console.error(`[AudioPipelineRuntime][Worklet][COMMAND_ERROR] ${errorMessage}`)
-            }
+        if (payload.requestId === undefined) {
+            this._debug("COMMAND_ERROR (no requestId)", errorMessage)
             return
         }
 
-        const pending = this._pendingCommands.get(requestId)
+        const pending = this._pendingCommands.get(payload.requestId)
         if (!pending) {
-            if (this._options.debugLogs) {
-                console.error(`[AudioPipelineRuntime][Worklet][COMMAND_ERROR] ${errorMessage}`)
-            }
+            this._debug("COMMAND_ERROR (stale)", errorMessage)
             return
         }
 
         clearTimeout(pending.timeoutId)
-        this._pendingCommands.delete(requestId)
+        this._pendingCommands.delete(payload.requestId)
         pending.reject(new Error(errorMessage))
     }
 
-    private _rejectAllPendingCommands(reason: string) {
+    private _rejectAllPendingCommands(reason: string): void {
         for (const pending of this._pendingCommands.values()) {
             clearTimeout(pending.timeoutId)
             pending.reject(new Error(reason))
         }
-
         this._pendingCommands.clear()
     }
 
-    private async _fetchDeepFilterModel(modelUrl: string): Promise<ArrayBuffer> {
-        const response = await fetch(modelUrl)
-        if (!response.ok) {
-            throw new Error(
-                `Failed to fetch DeepFilter model: ${response.status} ${response.statusText}`,
-            )
+    // ── Debug logging ──────────────────────────────────────────────
+
+    private _debug(action: string, data?: unknown): void {
+        if (!this._options.debugLogs) return
+
+        if (data !== undefined) {
+            console.log(`AudioPipelineTrackProcessor.${action}`, data)
+        } else {
+            console.log(`AudioPipelineTrackProcessor.${action}`)
         }
-
-        return response.arrayBuffer()
-    }
-
-    private _closeInternal() {
-        if (this.denoiseNode) {
-            try {
-                this.denoiseNode.port.postMessage({ message: "DESTROY" })
-            } catch (_error) {
-                // Ignore postMessage errors when closing.
-            }
-            this.denoiseNode.port.onmessage = null
-        }
-
-        this._rejectAllPendingCommands("Audio pipeline runtime closed")
-
-        this.denoiseNode?.disconnect()
-        this.orgSourceNode?.disconnect()
-
-        this.denoiseNode = undefined
-        this.orgSourceNode = undefined
-        this.processedTrack = undefined
     }
 }

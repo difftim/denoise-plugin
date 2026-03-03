@@ -39,12 +39,8 @@ export class RnnoiseModule extends DenoiseModule<ResolvedRnnoiseModuleConfig> {
         this._outputPtr = this._module._malloc(RNNOISE_FRAME * Float32Array.BYTES_PER_ELEMENT)
 
         if (!this._inputPtr || !this._outputPtr) {
-            if (this._inputPtr) {
-                this._module._free(this._inputPtr)
-            }
-            if (this._outputPtr) {
-                this._module._free(this._outputPtr)
-            }
+            if (this._inputPtr) this._module._free(this._inputPtr)
+            if (this._outputPtr) this._module._free(this._outputPtr)
             this._module._rnnoise_destroy(this._context)
             throw new Error("Failed to allocate RNNoise heap buffers")
         }
@@ -56,8 +52,8 @@ export class RnnoiseModule extends DenoiseModule<ResolvedRnnoiseModuleConfig> {
     }
 
     processFrame(input: Float32Array, output: Float32Array): number {
-        for (let index = 0; index < RNNOISE_FRAME; index += 1) {
-            this._inputHeap[index] = input[index] * RNNOISE_SCALE
+        for (let i = 0; i < RNNOISE_FRAME; i += 1) {
+            this._inputHeap[i] = input[i] * RNNOISE_SCALE
         }
 
         const vadScore = this._module._rnnoise_process_frame(
@@ -66,23 +62,20 @@ export class RnnoiseModule extends DenoiseModule<ResolvedRnnoiseModuleConfig> {
             this._inputPtr,
         )
 
-        for (let index = 0; index < RNNOISE_FRAME; index += 1) {
-            output[index] = this._outputHeap[index] / RNNOISE_SCALE
+        const invScale = 1 / RNNOISE_SCALE
+        for (let i = 0; i < RNNOISE_FRAME; i += 1) {
+            output[i] = this._outputHeap[i] * invScale
         }
 
         return vadScore
     }
 
     updateConfig(config: ResolvedRnnoiseModuleConfig): void {
-        this._config = {
-            ...config,
-        }
+        this._config = { ...config }
     }
 
     dispose(): void {
-        if (this._disposed) {
-            return
-        }
+        if (this._disposed) return
 
         this._disposed = true
         this._module._rnnoise_destroy(this._context)

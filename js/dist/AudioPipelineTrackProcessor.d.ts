@@ -1,26 +1,19 @@
 import { Track } from "livekit-client";
 import type { AudioProcessorOptions, Room, TrackProcessor } from "livekit-client";
 import type { AudioPipelineOptions, DeepFilterModuleConfig, DenoiseModuleId, PipelineStage, RnnoiseModuleConfig } from "./options";
-export interface PendingCommand {
-    command: string;
-    timeoutId: ReturnType<typeof setTimeout>;
-    resolve: () => void;
-    reject: (error: Error) => void;
-}
 export declare class AudioPipelineTrackProcessor implements TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> {
-    private static readonly loadedContexts;
-    private static readonly loadedWorkletUrls;
+    private static readonly _loadedContexts;
+    private static readonly _loadedWorkletUrls;
     readonly name = "audio-pipeline-filter";
     processedTrack?: MediaStreamTrack | undefined;
-    private audioOpts?;
-    private denoiseNode?;
-    private orgSourceNode?;
-    private enabled;
+    private _audioOpts?;
+    private _workletNode?;
+    private _sourceNode?;
+    private _enabled;
     private _options;
     private _nextRequestId;
     private _pendingCommands;
     private _operationQueue;
-    private readonly _handleRuntimeMessage;
     constructor(options: AudioPipelineOptions);
     static isSupported(): boolean;
     init(opts: AudioProcessorOptions): Promise<void>;
@@ -33,15 +26,19 @@ export declare class AudioPipelineTrackProcessor implements TrackProcessor<Track
     setModuleConfig(moduleId: "deepfilternet", config: DeepFilterModuleConfig): Promise<void>;
     isEnabled(): Promise<boolean>;
     destroy(): Promise<void>;
-    private _setRnnoiseConfig;
-    private _setDeepFilterConfig;
+    private _buildModulePayload;
+    private _applyRnnoiseConfig;
+    private _applyDeepFilterConfig;
     private _initInternal;
-    private _resolveDeepFilterModelBuffer;
+    private _ensureWorkletLoaded;
+    private _closeInternal;
+    private _resolveModelBuffer;
+    private _fetchModel;
+    private readonly _handleRuntimeMessage;
     private _runSerial;
     private _sendCommand;
-    private _resolveCommand;
-    private _rejectCommand;
+    private _resolvePending;
+    private _rejectPending;
     private _rejectAllPendingCommands;
-    private _fetchDeepFilterModel;
-    private _closeInternal;
+    private _debug;
 }
