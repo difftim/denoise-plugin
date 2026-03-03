@@ -49,10 +49,9 @@ echo "============================================="
     -s MALLOC=emmalloc \
     -s MAXIMUM_MEMORY=4GB \
     -s MODULARIZE=1 \
-    -s ENVIRONMENT="web,worker,shell" \
+    -s ENVIRONMENT="web,worker" \
     -s EXPORT_ES6=1 \
     -s WASM_ASYNC_COMPILATION=0 \
-    -s SINGLE_FILE=1 \
     -s EXPORT_NAME=${MODULE_CREATE_NAME} \
     -s EXPORTED_FUNCTIONS="${RNN_EXPORTED_FUNCTIONS}" \
     .libs/librnnoise.${SO_SUFFIX} \
@@ -60,8 +59,10 @@ echo "============================================="
 
   rm -rf ../js/src/dist
   mkdir -p ../js/src/dist
+  mkdir -p ../js/dist
 
   mv $ENTRY_POINT ../js/src/dist/
+  mv rnnoise-sync.wasm ../js/dist/rnnoise.wasm
 
   git clean -f -d
 )

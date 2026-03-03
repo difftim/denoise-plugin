@@ -3,6 +3,7 @@ import type {
     DenoiseModuleId,
     DeepFilterModuleConfig,
     RnnoiseModuleConfig,
+    WasmUrls,
 } from "../options"
 
 export const DEFAULT_DENOISE_MODULE: DenoiseModuleId = "rnnoise"
@@ -22,8 +23,17 @@ export interface ResolvedDeepFilterModuleConfig {
     postFilterBeta: number
 }
 
+export const DEFAULT_RNNOISE_WASM_FILENAME = "rnnoise.wasm"
+export const DEFAULT_DEEPFILTER_WASM_FILENAME = "deepfilter.wasm"
+
+export interface ResolvedWasmUrls {
+    rnnoise: string
+    deepfilter: string
+}
+
 export interface ResolvedAudioPipelineOptions {
     workletUrl: string
+    wasmUrls: ResolvedWasmUrls
     debugLogs: boolean
     stages: {
         denoise: DenoiseModuleId
@@ -242,11 +252,26 @@ function resolveWorkletUrl(url: string): string {
     return trimmed
 }
 
+function baseDir(url: string): string {
+    const idx = url.lastIndexOf("/")
+    return idx >= 0 ? url.substring(0, idx + 1) : "./"
+}
+
+export function resolveWasmUrls(workletUrl: string, wasmUrls?: WasmUrls): ResolvedWasmUrls {
+    const base = baseDir(workletUrl)
+    return {
+        rnnoise: wasmUrls?.rnnoise?.trim() || `${base}${DEFAULT_RNNOISE_WASM_FILENAME}`,
+        deepfilter: wasmUrls?.deepfilter?.trim() || `${base}${DEFAULT_DEEPFILTER_WASM_FILENAME}`,
+    }
+}
+
 export function normalizeAudioPipelineOptions(
     options: AudioPipelineOptions,
 ): ResolvedAudioPipelineOptions {
+    const workletUrl = resolveWorkletUrl(options.workletUrl)
     return {
-        workletUrl: resolveWorkletUrl(options.workletUrl),
+        workletUrl,
+        wasmUrls: resolveWasmUrls(workletUrl, options.wasmUrls),
         debugLogs: Boolean(options.debugLogs),
         stages: {
             denoise: resolveDenoiseModule(options.stages?.denoise),

@@ -10,7 +10,7 @@ export declare class RnnoiseModule extends DenoiseModule<ResolvedRnnoiseModuleCo
     private readonly _inputHeap;
     private readonly _outputHeap;
     private _disposed;
-    constructor(config: ResolvedRnnoiseModuleConfig);
+    constructor(config: ResolvedRnnoiseModuleConfig, wasmBinary?: ArrayBuffer);
     processFrame(input: Float32Array, output: Float32Array): number;
     updateConfig(config: ResolvedRnnoiseModuleConfig): void;
     dispose(): void;

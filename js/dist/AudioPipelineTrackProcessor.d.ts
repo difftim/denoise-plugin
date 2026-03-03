@@ -32,8 +32,9 @@ export declare class AudioPipelineTrackProcessor implements TrackProcessor<Track
     private _initInternal;
     private _ensureWorkletLoaded;
     private _closeInternal;
+    private _fetchWasmBinaries;
     private _resolveModelBuffer;
-    private _fetchModel;
+    private _fetchBinary;
     private readonly _handleRuntimeMessage;
     private _runSerial;
     private _sendCommand;

@@ -14,10 +14,15 @@ export interface WorkletModuleConfigPayloadMap {
 interface BaseMainToWorkletMessage {
     requestId?: number;
 }
+export interface WasmBinaries {
+    rnnoiseWasm?: ArrayBuffer;
+    deepfilterWasm?: ArrayBuffer;
+}
 export interface InitPipelineMessage extends BaseMainToWorkletMessage {
     message: "INIT_PIPELINE";
     enable?: boolean;
     debugLogs?: boolean;
+    wasmBinaries?: WasmBinaries;
     stages?: {
         denoise?: DenoiseModuleId;
     };

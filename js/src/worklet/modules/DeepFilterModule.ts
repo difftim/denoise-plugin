@@ -1,6 +1,5 @@
 import { cloneBytes, sameBytes } from "../../shared/normalize"
 import { DenoiseModule } from "./DenoiseModule"
-import createDeepFilterWasmModuleSync from "../../dist/deepfilter-sync.js"
 
 export interface DeepFilterRuntimeConfig {
     modelBytes?: Uint8Array
@@ -20,6 +19,18 @@ interface DeepFilterBindings {
     df_set_post_filter_beta: (state: number, beta: number) => void
 }
 
+let bindings: DeepFilterBindings | undefined
+let wasmInitialized = false
+
+export function initDeepFilterWasm(wasmBinary: ArrayBuffer): void {
+    if (wasmInitialized) return
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    bindings = (require("../../dist/deepfilter-bindgen.js") as { default: DeepFilterBindings }).default
+    bindings.initSync(wasmBinary)
+    wasmInitialized = true
+}
+
 export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
     readonly moduleId = "deepfilternet"
 
@@ -29,13 +40,22 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
     private _lookahead = 0
     private _disposed = false
 
-    constructor(config: DeepFilterRuntimeConfig) {
+    constructor(config: DeepFilterRuntimeConfig, wasmBinary?: ArrayBuffer) {
         super({
             ...config,
             modelBytes: cloneBytes(config.modelBytes),
         })
 
-        this._bindings = createDeepFilterWasmModuleSync() as DeepFilterBindings
+        if (wasmBinary) {
+            initDeepFilterWasm(wasmBinary)
+        }
+
+        if (!bindings) {
+            throw new Error(
+                "DeepFilter WASM not initialized. Provide deepfilterWasm in INIT_PIPELINE.",
+            )
+        }
+        this._bindings = bindings
         this._createState(this._config)
     }
 

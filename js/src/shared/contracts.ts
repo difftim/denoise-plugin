@@ -8,7 +8,7 @@ import type {
 export const COMMAND_TIMEOUT_MS = 10000
 export const REQUIRED_SAMPLE_RATE = 48000
 
-export interface WorkletRnnoiseConfigPayload extends RnnoiseModuleConfig {}
+export interface WorkletRnnoiseConfigPayload extends RnnoiseModuleConfig { }
 
 export interface WorkletDeepFilterConfigPayload extends Omit<
     DeepFilterModuleConfig,
@@ -30,10 +30,16 @@ interface BaseMainToWorkletMessage {
     requestId?: number
 }
 
+export interface WasmBinaries {
+    rnnoiseWasm?: ArrayBuffer
+    deepfilterWasm?: ArrayBuffer
+}
+
 export interface InitPipelineMessage extends BaseMainToWorkletMessage {
     message: "INIT_PIPELINE"
     enable?: boolean
     debugLogs?: boolean
+    wasmBinaries?: WasmBinaries
     stages?: {
         denoise?: DenoiseModuleId
     }

@@ -1,4 +1,4 @@
-import type { AudioPipelineOptions, DenoiseModuleId, DeepFilterModuleConfig, RnnoiseModuleConfig } from "../options";
+import type { AudioPipelineOptions, DenoiseModuleId, DeepFilterModuleConfig, RnnoiseModuleConfig, WasmUrls } from "../options";
 export declare const DEFAULT_DENOISE_MODULE: DenoiseModuleId;
 export declare const DEFAULT_RNNOISE_VAD_LOG_INTERVAL_MS = 1000;
 export declare const DEFAULT_DF_ATTEN_LIM_DB = 100;
@@ -13,8 +13,15 @@ export interface ResolvedDeepFilterModuleConfig {
     attenLimDb: number;
     postFilterBeta: number;
 }
+export declare const DEFAULT_RNNOISE_WASM_FILENAME = "rnnoise.wasm";
+export declare const DEFAULT_DEEPFILTER_WASM_FILENAME = "deepfilter.wasm";
+export interface ResolvedWasmUrls {
+    rnnoise: string;
+    deepfilter: string;
+}
 export interface ResolvedAudioPipelineOptions {
     workletUrl: string;
+    wasmUrls: ResolvedWasmUrls;
     debugLogs: boolean;
     stages: {
         denoise: DenoiseModuleId;
@@ -49,4 +56,5 @@ export declare function mergeWorkletDeepFilterState(base: WorkletDeepFilterState
     attenLimDb?: number;
     postFilterBeta?: number;
 }): WorkletDeepFilterState;
+export declare function resolveWasmUrls(workletUrl: string, wasmUrls?: WasmUrls): ResolvedWasmUrls;
 export declare function normalizeAudioPipelineOptions(options: AudioPipelineOptions): ResolvedAudioPipelineOptions;

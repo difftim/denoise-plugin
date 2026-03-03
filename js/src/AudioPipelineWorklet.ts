@@ -1,6 +1,7 @@
 import type { DenoiseModuleId } from "./options"
 import type {
     MainToWorkletMessage,
+    WasmBinaries,
     WorkletDeepFilterConfigPayload,
     WorkletRnnoiseConfigPayload,
     WorkletToMainMessage,
@@ -18,7 +19,7 @@ import {
     type WorkletDeepFilterState,
 } from "./shared/normalize"
 import { MonoRingBuffer } from "./worklet/MonoRingBuffer"
-import { DeepFilterModule } from "./worklet/modules/DeepFilterModule"
+import { DeepFilterModule, initDeepFilterWasm } from "./worklet/modules/DeepFilterModule"
 import { RnnoiseModule } from "./worklet/modules/RnnoiseModule"
 
 const QUANTUM_SAMPLES = 128
@@ -48,6 +49,9 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     private _processingErrorReported = false
 
     private _currentModuleId: DenoiseModuleId = DEFAULT_DENOISE_MODULE
+
+    private _rnnoiseWasm?: ArrayBuffer
+    private _deepfilterWasm?: ArrayBuffer
 
     private _rnnoiseConfig: ResolvedRnnoiseModuleConfig = normalizeRnnoiseConfig()
     private _deepFilterState: WorkletDeepFilterState = defaultWorkletDeepFilterState()
@@ -153,6 +157,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     ): void {
         this._debugLogs = payload.debugLogs ?? this._debugLogs
         this._currentModuleId = resolveDenoiseModule(payload.stages?.denoise)
+        this._storeWasmBinaries(payload.wasmBinaries)
 
         this._rnnoiseConfig = mergeRnnoiseConfig(
             normalizeRnnoiseConfig(),
@@ -171,6 +176,15 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         this._shouldProcess = payload.enable ?? this._shouldProcess
         this._syncActiveProcessor()
         this._logInfo(`AUDIO_PIPELINE_WORKLET_READY:${this._currentModuleId}`)
+    }
+
+    private _storeWasmBinaries(binaries?: WasmBinaries): void {
+        if (!binaries) return
+        if (binaries.rnnoiseWasm) this._rnnoiseWasm = binaries.rnnoiseWasm
+        if (binaries.deepfilterWasm) {
+            this._deepfilterWasm = binaries.deepfilterWasm
+            initDeepFilterWasm(binaries.deepfilterWasm)
+        }
     }
 
     private _setEnabled(enable: boolean): void {
@@ -289,9 +303,9 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
     private _createDenoiseModule(moduleId: DenoiseModuleId): ActiveDenoiseModule {
         if (moduleId === "deepfilternet") {
-            return new DeepFilterModule(this._deepFilterState)
+            return new DeepFilterModule(this._deepFilterState, this._deepfilterWasm)
         }
-        return new RnnoiseModule(this._rnnoiseConfig)
+        return new RnnoiseModule(this._rnnoiseConfig, this._rnnoiseWasm)
     }
 
     private _swapDenoiseModule(module: ActiveDenoiseModule, moduleId: DenoiseModuleId): void {

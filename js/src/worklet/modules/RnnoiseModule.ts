@@ -25,10 +25,12 @@ export class RnnoiseModule extends DenoiseModule<ResolvedRnnoiseModuleConfig> {
     private readonly _outputHeap: Float32Array
     private _disposed = false
 
-    constructor(config: ResolvedRnnoiseModuleConfig) {
+    constructor(config: ResolvedRnnoiseModuleConfig, wasmBinary?: ArrayBuffer) {
         super(config)
 
-        this._module = createRNNWasmModuleSync() as IRnnoiseModule
+        this._module = createRNNWasmModuleSync(
+            wasmBinary ? { wasmBinary } : {},
+        ) as IRnnoiseModule
         this._context = this._module._rnnoise_create()
 
         if (!this._context) {

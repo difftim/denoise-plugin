@@ -8,4 +8,5 @@ export type {
     DenoiseModuleId,
     PipelineStage,
     RnnoiseModuleConfig,
+    WasmUrls,
 } from "./options"

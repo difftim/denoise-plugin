@@ -10,6 +10,7 @@ import type {
 import type {
     MainToWorkletMessage,
     RuntimeMessage,
+    WasmBinaries,
     WorkletDeepFilterConfigPayload,
 } from "./shared/contracts"
 import { COMMAND_TIMEOUT_MS } from "./shared/contracts"
@@ -21,6 +22,7 @@ import {
     resolveDenoiseModule,
     type ResolvedAudioPipelineOptions,
     type ResolvedDeepFilterModuleConfig,
+    type ResolvedWasmUrls,
 } from "./shared/normalize"
 
 interface PendingCommand {
@@ -197,7 +199,7 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
             nextConfig.modelBuffer = cloneArrayBuffer(modelBuffer)
         } else if (config.modelUrl !== undefined) {
             if (nextConfig.modelUrl) {
-                modelBuffer = await this._fetchModel(nextConfig.modelUrl)
+                modelBuffer = await this._fetchBinary(nextConfig.modelUrl, "DeepFilter model")
                 nextConfig.modelBuffer = cloneArrayBuffer(modelBuffer)
             } else {
                 clearModel = true
@@ -250,6 +252,9 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
         const currentModule = this._options.stages.denoise
         const deepConfig = this._options.moduleConfigs.deepfilternet
 
+        const { wasmBinaries, wasmTransferables } =
+            await this._fetchWasmBinaries(this._options.wasmUrls, currentModule)
+
         let initModelBuffer: ArrayBuffer | undefined
         if (currentModule === "deepfilternet") {
             initModelBuffer = await this._resolveModelBuffer(deepConfig)
@@ -259,11 +264,15 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
             }
         }
 
+        const transferables: Transferable[] = [...wasmTransferables]
+        if (initModelBuffer) transferables.push(initModelBuffer)
+
         await this._sendCommand(
             {
                 message: "INIT_PIPELINE",
                 enable: this._enabled,
                 debugLogs: this._options.debugLogs,
+                wasmBinaries,
                 stages: { denoise: currentModule },
                 moduleConfigs: {
                     rnnoise: { ...this._options.moduleConfigs.rnnoise },
@@ -274,7 +283,7 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
                     },
                 },
             },
-            initModelBuffer ? [initModelBuffer] : undefined,
+            transferables.length > 0 ? transferables : undefined,
         )
 
         this._sourceNode = ctx.createMediaStreamSource(new MediaStream([opts.track]))
@@ -333,21 +342,48 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
         this.processedTrack = undefined
     }
 
-    // ── Model helpers ──────────────────────────────────────────────
+    // ── WASM + Model helpers ──────────────────────────────────────
+
+    private async _fetchWasmBinaries(
+        urls: ResolvedWasmUrls,
+        activeModule: DenoiseModuleId,
+    ): Promise<{
+        wasmBinaries: WasmBinaries
+        wasmTransferables: ArrayBuffer[]
+    }> {
+        const wasmBinaries: WasmBinaries = {}
+        const wasmTransferables: ArrayBuffer[] = []
+
+        if (activeModule === "rnnoise" || activeModule === "deepfilternet") {
+            this._debug("fetching rnnoise wasm", urls.rnnoise)
+            const rnnoiseWasm = await this._fetchBinary(urls.rnnoise, "RNNoise WASM")
+            wasmBinaries.rnnoiseWasm = rnnoiseWasm
+            wasmTransferables.push(rnnoiseWasm)
+        }
+
+        if (activeModule === "deepfilternet") {
+            this._debug("fetching deepfilter wasm", urls.deepfilter)
+            const deepfilterWasm = await this._fetchBinary(urls.deepfilter, "DeepFilter WASM")
+            wasmBinaries.deepfilterWasm = deepfilterWasm
+            wasmTransferables.push(deepfilterWasm)
+        }
+
+        return { wasmBinaries, wasmTransferables }
+    }
 
     private async _resolveModelBuffer(
         config: ResolvedDeepFilterModuleConfig,
     ): Promise<ArrayBuffer | undefined> {
         if (config.modelBuffer) return cloneArrayBuffer(config.modelBuffer)
         if (!config.modelUrl) return undefined
-        return this._fetchModel(config.modelUrl)
+        return this._fetchBinary(config.modelUrl, "DeepFilter model")
     }
 
-    private async _fetchModel(modelUrl: string): Promise<ArrayBuffer> {
-        const response = await fetch(modelUrl)
+    private async _fetchBinary(url: string, label: string): Promise<ArrayBuffer> {
+        const response = await fetch(url)
         if (!response.ok) {
             throw new Error(
-                `Failed to fetch DeepFilter model: ${response.status} ${response.statusText}`,
+                `Failed to fetch ${label}: ${response.status} ${response.statusText} (${url})`,
             )
         }
         return response.arrayBuffer()

@@ -4,6 +4,7 @@ export interface DeepFilterRuntimeConfig {
     attenLimDb: number;
     postFilterBeta: number;
 }
+export declare function initDeepFilterWasm(wasmBinary: ArrayBuffer): void;
 export declare class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
     readonly moduleId = "deepfilternet";
     private readonly _bindings;
@@ -11,7 +12,7 @@ export declare class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeCon
     private _frameLength;
     private _lookahead;
     private _disposed;
-    constructor(config: DeepFilterRuntimeConfig);
+    constructor(config: DeepFilterRuntimeConfig, wasmBinary?: ArrayBuffer);
     get frameLength(): number;
     get lookahead(): number;
     processFrame(input: Float32Array, output: Float32Array): number | undefined;

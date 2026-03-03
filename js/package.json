@@ -1,7 +1,7 @@
 {
     "name": "@cc-livekit/audio-pipeline-plugin",
     "description": "A WebAssembly audio pipeline module for RNNoise and DeepFilterNet on web frontends.",
-    "version": "1.0.10",
+    "version": "1.0.61",
     "main": "./dist/index.cjs",
     "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
@@ -10,11 +10,12 @@
         "url": "git+https://github.com/difftim/denoise-plugin.git"
     },
     "scripts": {
-        "build": "npm run build:dockerimage && npm run build:emscripten && npm run build:js",
-        "clean:dist": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+        "build": "npm run build:rnnoise:wasm && npm run build:deepfilter:wasm && npm run build:js",
+        "clean:dist": "node ./scripts/clean-dist.mjs",
         "lint": "publint",
         "build:dockerimage": "docker image inspect -f '.' emscripten-autotools-4.0.4 || docker build -t emscripten-autotools-4.0.4 .",
         "build:emscripten": "docker run --rm -v $(pwd)/../:/src emscripten-autotools-4.0.4 bash -x ./js/build.sh",
+        "build:rnnoise:wasm": "npm run build:dockerimage && npm run build:emscripten",
         "build:deepfilter:wasm": "cd ../DeepFilterNet && ./scripts/build_wasm_package.sh",
         "build:deepfilter:artifacts": "node ./scripts/build-deepfilter-artifacts.mjs",
         "build:worklet": "webpack --config webpack.worklet.config.js",
@@ -23,6 +24,8 @@
     },
     "files": [
         "dist/AudioPipelineWorklet.js",
+        "dist/rnnoise.wasm",
+        "dist/deepfilter.wasm",
         "dist/index.js",
         "dist/index.cjs",
         "dist/index.umd.js",
@@ -64,9 +67,6 @@
             "url": "http://www.apache.org/licenses/LICENSE-2.0"
         }
     ],
-    "dependencies": {
-        "@alexanderolsen/libsamplerate-js": "2.1.2"
-    },
     "publishConfig": {
         "access": "public"
     }
