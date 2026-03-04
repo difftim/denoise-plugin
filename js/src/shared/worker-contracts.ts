@@ -28,6 +28,11 @@ export interface WorkerSetConfigMessage {
     config: Record<string, unknown>
 }
 
+export interface WorkerSetEnabledMessage {
+    type: "SET_ENABLED"
+    enable: boolean
+}
+
 export interface WorkerDestroyMessage {
     type: "DESTROY"
 }
@@ -37,6 +42,7 @@ export type WorkletToWorkerMessage =
     | WorkerProcessFrameMessage
     | WorkerSetModuleMessage
     | WorkerSetConfigMessage
+    | WorkerSetEnabledMessage
     | WorkerDestroyMessage
 
 // ── Worker → Worklet ────────────────────────────────────────────

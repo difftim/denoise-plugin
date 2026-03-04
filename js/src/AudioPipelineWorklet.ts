@@ -223,6 +223,12 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     private _setEnabled(enable: boolean): void {
         this._shouldProcess = enable
         this._lastVadLogAtMs = 0
+
+        this._workerPort?.postMessage({
+            type: "SET_ENABLED",
+            enable,
+        } satisfies WorkletToWorkerMessage)
+
         this._logInfo(enable ? "AUDIO_PIPELINE_ENABLED" : "AUDIO_PIPELINE_DISABLED")
     }
 

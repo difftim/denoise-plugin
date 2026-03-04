@@ -23,6 +23,7 @@ let debugLogs = false
 
 let currentModuleId: DenoiseModuleId = "rnnoise"
 let denoiseModule: ActiveDenoiseModule | undefined
+let processingEnabled = true
 
 let rnnoiseWasm: ArrayBuffer | undefined
 let deepfilterWasm: ArrayBuffer | undefined
@@ -144,12 +145,15 @@ function handleInit(msg: Extract<WorkletToWorkerMessage, { type: "INIT" }>): voi
 }
 
 function handleProcessFrame(msg: Extract<WorkletToWorkerMessage, { type: "PROCESS_FRAME" }>): void {
-    if (!denoiseModule) {
-        respondError("No denoise module initialized")
+    const input = msg.inputBuffer
+
+    if (!processingEnabled || !denoiseModule) {
+        const output = outputPool.acquire()
+        output.set(input.length <= output.length ? input : input.subarray(0, output.length))
+        respond({ type: "FRAME_RESULT", outputBuffer: output }, [output.buffer])
         return
     }
 
-    const input = msg.inputBuffer
     const frameLen = denoiseModule.frameLength
     const numFrames = Math.floor(input.length / frameLen)
 
@@ -270,6 +274,10 @@ function handleMessage(event: MessageEvent<WorkletToWorkerMessage>): void {
                 break
             case "SET_CONFIG":
                 handleSetConfig(msg)
+                break
+            case "SET_ENABLED":
+                processingEnabled = msg.enable
+                logInfo(msg.enable ? "PROCESSING_ENABLED" : "PROCESSING_DISABLED")
                 break
             case "DESTROY":
                 handleDestroy()

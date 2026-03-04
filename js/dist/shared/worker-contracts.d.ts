@@ -21,10 +21,14 @@ export interface WorkerSetConfigMessage {
     moduleId: DenoiseModuleId;
     config: Record<string, unknown>;
 }
+export interface WorkerSetEnabledMessage {
+    type: "SET_ENABLED";
+    enable: boolean;
+}
 export interface WorkerDestroyMessage {
     type: "DESTROY";
 }
-export type WorkletToWorkerMessage = WorkerInitMessage | WorkerProcessFrameMessage | WorkerSetModuleMessage | WorkerSetConfigMessage | WorkerDestroyMessage;
+export type WorkletToWorkerMessage = WorkerInitMessage | WorkerProcessFrameMessage | WorkerSetModuleMessage | WorkerSetConfigMessage | WorkerSetEnabledMessage | WorkerDestroyMessage;
 export interface WorkerInitOkMessage {
     type: "INIT_OK";
     frameLength: number;
