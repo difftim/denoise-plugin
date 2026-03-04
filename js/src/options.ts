@@ -22,6 +22,7 @@ export interface WasmUrls {
 
 export interface AudioPipelineOptions {
     workletUrl: string
+    workerUrl?: string
     wasmUrls?: WasmUrls
     debugLogs?: boolean
     stages?: {

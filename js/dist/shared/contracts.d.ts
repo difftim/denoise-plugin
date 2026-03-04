@@ -22,7 +22,8 @@ export interface InitPipelineMessage extends BaseMainToWorkletMessage {
     message: "INIT_PIPELINE";
     enable?: boolean;
     debugLogs?: boolean;
-    wasmBinaries?: WasmBinaries;
+    workerPort?: MessagePort;
+    frameLength?: number;
     stages?: {
         denoise?: DenoiseModuleId;
     };

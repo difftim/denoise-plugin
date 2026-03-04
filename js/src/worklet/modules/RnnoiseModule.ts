@@ -29,7 +29,9 @@ export class RnnoiseModule extends DenoiseModule<ResolvedRnnoiseModuleConfig> {
         super(config)
 
         this._module = createRNNWasmModuleSync(
-            wasmBinary ? { wasmBinary } : {},
+            wasmBinary
+                ? { wasmBinary, locateFile: () => "rnnoise-sync.wasm" }
+                : {},
         ) as IRnnoiseModule
         this._context = this._module._rnnoise_create()
 

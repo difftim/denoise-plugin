@@ -21,6 +21,7 @@ export interface ResolvedWasmUrls {
 }
 export interface ResolvedAudioPipelineOptions {
     workletUrl: string;
+    workerUrl: string;
     wasmUrls: ResolvedWasmUrls;
     debugLogs: boolean;
     stages: {
@@ -57,4 +58,6 @@ export declare function mergeWorkletDeepFilterState(base: WorkletDeepFilterState
     postFilterBeta?: number;
 }): WorkletDeepFilterState;
 export declare function resolveWasmUrls(workletUrl: string, wasmUrls?: WasmUrls): ResolvedWasmUrls;
+export declare const DEFAULT_WORKER_FILENAME = "AudioPipelineWorker.js";
+export declare function resolveWorkerUrl(workletUrl: string, workerUrl?: string): string;
 export declare function normalizeAudioPipelineOptions(options: AudioPipelineOptions): ResolvedAudioPipelineOptions;

@@ -1,72 +1,41 @@
 import type { DenoiseModuleId } from "./options"
 import type {
     MainToWorkletMessage,
-    WasmBinaries,
     WorkletDeepFilterConfigPayload,
     WorkletRnnoiseConfigPayload,
     WorkletToMainMessage,
 } from "./shared/contracts"
-import {
-    DEFAULT_DENOISE_MODULE,
-    cloneBytes,
-    defaultWorkletDeepFilterState,
-    mergeRnnoiseConfig,
-    mergeWorkletDeepFilterState,
-    normalizeRnnoiseConfig,
-    resolveDenoiseModule,
-    sameBytes,
-    type ResolvedRnnoiseModuleConfig,
-    type WorkletDeepFilterState,
-} from "./shared/normalize"
+import { resolveDenoiseModule } from "./shared/normalize"
 import { MonoRingBuffer } from "./worklet/MonoRingBuffer"
-import { DeepFilterModule, initDeepFilterWasm } from "./worklet/modules/DeepFilterModule"
-import { RnnoiseModule } from "./worklet/modules/RnnoiseModule"
+import { BufferPool } from "./shared/BufferPool"
+import type { WorkerToWorkletMessage, WorkletToWorkerMessage } from "./shared/worker-contracts"
 
 const QUANTUM_SAMPLES = 128
-
-type ActiveDenoiseModule = RnnoiseModule | DeepFilterModule
-
-interface FrameProcessor {
-    readonly frameLength: number
-    processFrame(input: Float32Array, output: Float32Array): number | undefined
-}
-
-const passthroughProcessor: FrameProcessor = {
-    frameLength: QUANTUM_SAMPLES,
-    processFrame(input: Float32Array, output: Float32Array) {
-        output.set(input)
-        return undefined
-    },
-}
+const DEFAULT_FRAME_LENGTH = 480
+const FRAMES_PER_TRANSFER = 1
 
 class AudioPipelineWorklet extends AudioWorkletProcessor {
     private _messageChain: Promise<void> = Promise.resolve()
 
     private _debugLogs = false
     private _destroyed = false
-    private _initialized = false
     private _shouldProcess = true
-    private _processingErrorReported = false
+    private _workerReady = false
 
-    private _currentModuleId: DenoiseModuleId = DEFAULT_DENOISE_MODULE
+    private _currentModuleId: DenoiseModuleId = "rnnoise"
+    private _frameLength = DEFAULT_FRAME_LENGTH
+    private _transferSize = DEFAULT_FRAME_LENGTH * FRAMES_PER_TRANSFER
+    private _prefilled = false
 
-    private _rnnoiseWasm?: ArrayBuffer
-    private _deepfilterWasm?: ArrayBuffer
+    private _workerPort?: MessagePort
 
-    private _rnnoiseConfig: ResolvedRnnoiseModuleConfig = normalizeRnnoiseConfig()
-    private _deepFilterState: WorkletDeepFilterState = defaultWorkletDeepFilterState()
+    private _inputQueue = new MonoRingBuffer(64 * DEFAULT_FRAME_LENGTH)
+    private _outputQueue = new MonoRingBuffer(64 * DEFAULT_FRAME_LENGTH)
+    private _inputPool = new BufferPool(DEFAULT_FRAME_LENGTH * FRAMES_PER_TRANSFER, 8)
 
-    private _denoiseModule?: ActiveDenoiseModule
-    private _lastDfModelBytes?: Uint8Array
-
-    private _activeProcessor: FrameProcessor = passthroughProcessor
-
+    private _lastVadScore: number | undefined
     private _lastVadLogAtMs = 0
-
-    private _inputQueue = new MonoRingBuffer(64 * QUANTUM_SAMPLES)
-    private _outputQueue = new MonoRingBuffer(64 * QUANTUM_SAMPLES)
-    private _inputFrame = new Float32Array(QUANTUM_SAMPLES)
-    private _outputFrame = new Float32Array(QUANTUM_SAMPLES)
+    private _vadLogIntervalMs = 1000
 
     constructor(options: { processorOptions?: { debugLogs?: boolean } }) {
         super()
@@ -76,40 +45,40 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     }
 
     process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
-        try {
-            if (this._destroyed) return false
+        if (this._destroyed) return false
 
-            const inputMono = inputs[0]?.[0]
-            const outputMono = outputs[0]?.[0]
-            if (!inputMono || !outputMono) return true
+        const inputMono = inputs[0]?.[0]
+        const outputMono = outputs[0]?.[0]
+        if (!inputMono || !outputMono) return true
 
-            const processor = this._activeProcessor
-            this._inputQueue.push(inputMono)
+        this._inputQueue.push(inputMono)
 
-            while (
-                this._inputQueue.framesAvailable >= processor.frameLength &&
-                this._inputQueue.pull(this._inputFrame)
-            ) {
-                const vadScore = processor.processFrame(this._inputFrame, this._outputFrame)
-                this._maybeEmitVadLog(vadScore)
-                this._outputQueue.push(this._outputFrame)
+        const workerActive = this._workerReady && this._workerPort
+
+        while (this._inputQueue.framesAvailable >= this._transferSize) {
+            const frame = this._inputPool.acquire()
+            this._inputQueue.pull(frame)
+
+            if (workerActive) {
+                this._workerPort!.postMessage(
+                    { type: "PROCESS_FRAME", inputBuffer: frame } satisfies WorkletToWorkerMessage,
+                    [frame.buffer],
+                )
+            } else {
+                this._outputQueue.push(frame)
             }
-
-            if (this._outputQueue.pull(outputMono)) {
-                const output = outputs[0]
-                for (let ch = 1; ch < output.length; ch += 1) {
-                    output[ch].set(outputMono)
-                }
-            }
-
-            return true
-        } catch (error) {
-            this._reportProcessError(error)
-            return true
         }
+
+        this._outputQueue.pull(outputMono)
+        const output = outputs[0]
+        for (let ch = 1; ch < output.length; ch++) {
+            output[ch].set(outputMono)
+        }
+
+        return true
     }
 
-    // ── Message handling ───────────────────────────────────────────
+    // ── Main thread message handling ────────────────────────────────
 
     private _setupMessageHandler(): void {
         this.port.onmessage = (event: MessageEvent<MainToWorkletMessage>) => {
@@ -150,47 +119,110 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         this._respondOk(payload.requestId, payload.message)
     }
 
-    // ── Pipeline lifecycle ─────────────────────────────────────────
+    // ── Pipeline lifecycle ──────────────────────────────────────────
 
     private _initPipeline(
         payload: Extract<MainToWorkletMessage, { message: "INIT_PIPELINE" }>,
     ): void {
         this._debugLogs = payload.debugLogs ?? this._debugLogs
         this._currentModuleId = resolveDenoiseModule(payload.stages?.denoise)
-        this._storeWasmBinaries(payload.wasmBinaries)
-
-        this._rnnoiseConfig = mergeRnnoiseConfig(
-            normalizeRnnoiseConfig(),
-            payload.moduleConfigs?.rnnoise,
-        )
-        this._deepFilterState = mergeWorkletDeepFilterState(
-            defaultWorkletDeepFilterState(),
-            payload.moduleConfigs?.deepfilternet,
-        )
-
-        this._swapDenoiseModule(
-            this._createDenoiseModule(this._currentModuleId),
-            this._currentModuleId,
-        )
-
         this._shouldProcess = payload.enable ?? this._shouldProcess
-        this._syncActiveProcessor()
+
+        if (payload.moduleConfigs?.rnnoise?.bufferOverflowMs) {
+            this._vadLogIntervalMs = payload.moduleConfigs.rnnoise.bufferOverflowMs
+        }
+
+        if (payload.workerPort) {
+            this._workerPort = payload.workerPort
+            this._setupWorkerPort()
+
+            const frameLength = payload.frameLength ?? DEFAULT_FRAME_LENGTH
+            this._onWorkerInitOk(frameLength)
+        }
+
         this._logInfo(`AUDIO_PIPELINE_WORKLET_READY:${this._currentModuleId}`)
     }
 
-    private _storeWasmBinaries(binaries?: WasmBinaries): void {
-        if (!binaries) return
-        if (binaries.rnnoiseWasm) this._rnnoiseWasm = binaries.rnnoiseWasm
-        if (binaries.deepfilterWasm) {
-            this._deepfilterWasm = binaries.deepfilterWasm
-            initDeepFilterWasm(binaries.deepfilterWasm)
+    private _setupWorkerPort(): void {
+        if (!this._workerPort) return
+
+        this._workerPort.onmessage = (event: MessageEvent<WorkerToWorkletMessage>) => {
+            const msg = event.data
+            if (!msg?.type) return
+
+            switch (msg.type) {
+                case "INIT_OK":
+                    this._onWorkerInitOk(msg.frameLength)
+                    break
+                case "FRAME_RESULT":
+                    this._onFrameResult(msg.outputBuffer, msg.vadScore)
+                    break
+                case "MODULE_CHANGED":
+                    this._onModuleChanged(msg.frameLength, msg.lookahead)
+                    break
+                case "ERROR":
+                    this._logError(`WORKER_ERROR:${msg.error}`)
+                    break
+            }
         }
+    }
+
+    private _onWorkerInitOk(frameLength: number): void {
+        this._frameLength = frameLength
+        this._rebuildForFrameLength(frameLength)
+        this._workerReady = true
+        this._logInfo("WORKER_INIT_OK", { frameLength })
+    }
+
+    private _onFrameResult(outputBuffer: Float32Array, vadScore?: number): void {
+        this._outputQueue.push(outputBuffer)
+        this._maybeEmitVadLog(vadScore)
+    }
+
+    private _onModuleChanged(frameLength: number, _lookahead: number): void {
+        if (frameLength !== this._frameLength) {
+            this._frameLength = frameLength
+            this._rebuildForFrameLength(frameLength)
+        }
+        this._logInfo("MODULE_CHANGED", { frameLength })
+    }
+
+    private _rebuildForFrameLength(frameLength: number): void {
+        this._transferSize = frameLength * FRAMES_PER_TRANSFER
+        const queueCapacity = 64 * Math.max(this._transferSize, QUANTUM_SAMPLES)
+
+        const prevInput = this._inputQueue
+        const prevOutput = this._outputQueue
+
+        this._inputQueue = new MonoRingBuffer(queueCapacity)
+        this._outputQueue = new MonoRingBuffer(queueCapacity)
+
+        prevInput.drainInto(this._inputQueue)
+        prevOutput.drainInto(this._outputQueue)
+
+        if (!this._prefilled) {
+            this._prefilled = true
+            const prefill = Math.ceil((2 * frameLength) / QUANTUM_SAMPLES) * QUANTUM_SAMPLES
+            this._outputQueue.push(new Float32Array(prefill))
+            this._logInfo("PREFILL", {
+                frameLength,
+                prefill,
+                framesPerTransfer: FRAMES_PER_TRANSFER,
+            })
+        }
+
+        this._inputPool = this._inputPool.resize(this._transferSize)
+
+        this._logInfo("REBUILD_QUEUES", {
+            frameLength,
+            transferSize: this._transferSize,
+            queueCapacity,
+        })
     }
 
     private _setEnabled(enable: boolean): void {
         this._shouldProcess = enable
         this._lastVadLogAtMs = 0
-        this._syncActiveProcessor()
         this._logInfo(enable ? "AUDIO_PIPELINE_ENABLED" : "AUDIO_PIPELINE_DISABLED")
     }
 
@@ -202,214 +234,53 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         }
 
         const nextId = resolveDenoiseModule(payload.moduleId)
+        this._currentModuleId = nextId
 
-        if (nextId === "rnnoise") {
-            this._rnnoiseConfig = mergeRnnoiseConfig(
-                this._rnnoiseConfig,
-                payload.config as WorkletRnnoiseConfigPayload | undefined,
-            )
-
-            if (
-                this._denoiseModule instanceof RnnoiseModule &&
-                this._currentModuleId === "rnnoise"
-            ) {
-                this._logInfo("RNNOISE_UPDATE_CONFIG", this._rnnoiseConfig, true)
-                this._denoiseModule.updateConfig(this._rnnoiseConfig)
-                this._lastVadLogAtMs = 0
-                return
-            }
-
-            this._swapDenoiseModule(this._createDenoiseModule("rnnoise"), "rnnoise")
-            return
-        }
-
-        this._deepFilterState = mergeWorkletDeepFilterState(
-            this._deepFilterState,
-            payload.config as WorkletDeepFilterConfigPayload | undefined,
-        )
-
-        if (
-            this._denoiseModule instanceof DeepFilterModule &&
-            this._currentModuleId === "deepfilternet"
-        ) {
-            this._applyDeepFilterUpdate()
-            return
-        }
-
-        this._swapDenoiseModule(this._createDenoiseModule("deepfilternet"), "deepfilternet")
+        this._workerPort?.postMessage({
+            type: "SET_MODULE",
+            moduleId: nextId,
+            config: payload.config
+                ? { [nextId === "rnnoise" ? "rnnoise" : "deepfilternet"]: payload.config }
+                : undefined,
+        } satisfies WorkletToWorkerMessage)
     }
 
     private _handleSetModuleConfig(
         payload: Extract<MainToWorkletMessage, { message: "SET_MODULE_CONFIG" }>,
     ): void {
         if (payload.moduleId === "rnnoise") {
-            this._rnnoiseConfig = mergeRnnoiseConfig(
-                this._rnnoiseConfig,
-                payload.config as WorkletRnnoiseConfigPayload,
-            )
-
-            if (
-                this._denoiseModule instanceof RnnoiseModule &&
-                this._currentModuleId === "rnnoise"
-            ) {
-                this._logInfo("RNNOISE_UPDATE_CONFIG", this._rnnoiseConfig, true)
-                this._denoiseModule.updateConfig(this._rnnoiseConfig)
-                this._lastVadLogAtMs = 0
+            const rnConfig = payload.config as WorkletRnnoiseConfigPayload
+            if (rnConfig?.bufferOverflowMs) {
+                this._vadLogIntervalMs = rnConfig.bufferOverflowMs
             }
-            return
         }
 
-        this._deepFilterState = mergeWorkletDeepFilterState(
-            this._deepFilterState,
-            payload.config as WorkletDeepFilterConfigPayload,
-        )
-
-        if (
-            this._denoiseModule instanceof DeepFilterModule &&
-            this._currentModuleId === "deepfilternet"
-        ) {
-            this._applyDeepFilterUpdate()
-        }
+        this._workerPort?.postMessage({
+            type: "SET_CONFIG",
+            moduleId: payload.moduleId,
+            config: payload.config as Record<string, unknown>,
+        } satisfies WorkletToWorkerMessage)
     }
 
-    // ── DeepFilter helpers ─────────────────────────────────────────
-
-    private _applyDeepFilterUpdate(): void {
-        const dfModule = this._denoiseModule as DeepFilterModule
-        const state = this._deepFilterState
-
-        this._logInfo("DEEPFILTERNET_UPDATE_CONFIG", this._summarizeDfConfig(state), true)
-
-        const modelChanged = !sameBytes(this._lastDfModelBytes, state.modelBytes)
-        dfModule.updateConfig(state)
-
-        if (modelChanged) {
-            this._lastDfModelBytes = cloneBytes(state.modelBytes)
-            this._warmUpModule(dfModule)
-        }
-    }
-
-    private _summarizeDfConfig(state: WorkletDeepFilterState) {
-        return {
-            attenLimDb: state.attenLimDb,
-            postFilterBeta: state.postFilterBeta,
-            hasModelBytes: Boolean(state.modelBytes),
-            modelBytesLength: state.modelBytes?.byteLength ?? 0,
-            modelUrl: state.modelUrl,
-        }
-    }
-
-    // ── Module management ──────────────────────────────────────────
-
-    private _createDenoiseModule(moduleId: DenoiseModuleId): ActiveDenoiseModule {
-        if (moduleId === "deepfilternet") {
-            return new DeepFilterModule(this._deepFilterState, this._deepfilterWasm)
-        }
-        return new RnnoiseModule(this._rnnoiseConfig, this._rnnoiseWasm)
-    }
-
-    private _swapDenoiseModule(module: ActiveDenoiseModule, moduleId: DenoiseModuleId): void {
-        const previous = this._denoiseModule
-
-        this._denoiseModule = module
-        this._currentModuleId = moduleId
-        this._initialized = true
-        this._processingErrorReported = false
-        this._lastVadLogAtMs = 0
-
-        if (module instanceof DeepFilterModule) {
-            this._lastDfModelBytes = cloneBytes(this._deepFilterState.modelBytes)
-        }
-
-        this._rebuildQueues(module.frameLength)
-        this._warmUpModule(module)
-        this._syncActiveProcessor()
-        previous?.dispose()
-
-        this._logInfo(`AUDIO_PIPELINE_STAGE_ACTIVE:denoise=${moduleId}`)
-    }
-
-    private _syncActiveProcessor(): void {
-        if (this._initialized && this._denoiseModule && this._shouldProcess) {
-            this._activeProcessor = this._denoiseModule
-        } else {
-            this._activeProcessor = passthroughProcessor
-        }
-        this._ensureFrameBuffers(this._activeProcessor.frameLength)
-    }
-
-    private _rebuildQueues(frameLength: number): void {
-        const queueCapacity = 64 * Math.max(frameLength, QUANTUM_SAMPLES)
-
-        const prevInput = this._inputQueue
-        const prevOutput = this._outputQueue
-
-        this._inputQueue = new MonoRingBuffer(queueCapacity)
-        this._outputQueue = new MonoRingBuffer(queueCapacity)
-
-        prevInput.drainInto(this._inputQueue)
-        prevOutput.drainInto(this._outputQueue)
-
-        this._ensureFrameBuffers(frameLength)
-        this._logInfo("AUDIO_PIPELINE_WORKLET_REBUILD_QUEUES", { frameLength, queueCapacity })
-    }
-
-    private _warmUpModule(module: ActiveDenoiseModule): void {
-        if (!(module instanceof DeepFilterModule) || module.lookahead <= 0) return
-
-        const frameLength = module.frameLength
-        const lookahead = module.lookahead
-        const silentInput = new Float32Array(frameLength)
-        const discardOutput = new Float32Array(frameLength)
-
-        for (let i = 0; i < lookahead; i++) {
-            module.processFrame(silentInput, discardOutput)
-        }
-
-        this._logInfo("AUDIO_PIPELINE_WORKLET_WARMUP", { frameLength, lookahead })
-    }
-
-    private _ensureFrameBuffers(frameLength: number): void {
-        if (this._inputFrame.length !== frameLength) {
-            this._inputFrame = new Float32Array(frameLength)
-        }
-        if (this._outputFrame.length !== frameLength) {
-            this._outputFrame = new Float32Array(frameLength)
-        }
-    }
-
-    // ── Cleanup ────────────────────────────────────────────────────
+    // ── Cleanup ─────────────────────────────────────────────────────
 
     private _destroy(): void {
         if (this._destroyed) return
 
         this._destroyed = true
-        this._initialized = false
-        this._denoiseModule?.dispose()
-        this._denoiseModule = undefined
-        this._activeProcessor = passthroughProcessor
+        this._workerReady = false
+
+        this._workerPort?.postMessage({ type: "DESTROY" } satisfies WorkletToWorkerMessage)
+        this._workerPort?.close()
+        this._workerPort = undefined
+
         this._inputQueue.clear()
         this._outputQueue.clear()
 
         this._logInfo("AUDIO_PIPELINE_WORKLET_DESTROYED")
     }
 
-    private _reportProcessError(error: unknown): void {
-        this._denoiseModule?.dispose()
-        this._denoiseModule = undefined
-        this._initialized = false
-        this._shouldProcess = false
-        this._activeProcessor = passthroughProcessor
-        this._ensureFrameBuffers(QUANTUM_SAMPLES)
-
-        if (!this._processingErrorReported) {
-            this._processingErrorReported = true
-            const msg = error instanceof Error ? error.message : String(error)
-            this._logError(`PROCESS_ERROR:${msg}`)
-        }
-    }
-
-    // ── Messaging ──────────────────────────────────────────────────
+    // ── Messaging to main thread ────────────────────────────────────
 
     private _respondOk(requestId: number | undefined, command: string): void {
         if (requestId === undefined) return
@@ -431,23 +302,25 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         this._logError(`${command}:${errorMsg}`)
     }
 
-    // ── VAD ────────────────────────────────────────────────────────
+    // ── VAD ─────────────────────────────────────────────────────────
 
     private _maybeEmitVadLog(vadScore: number | undefined): void {
         if (!this._debugLogs || this._currentModuleId !== "rnnoise") return
-        if (!this._rnnoiseConfig.vadLogs || !Number.isFinite(vadScore)) return
+        if (!Number.isFinite(vadScore)) return
+
+        this._lastVadScore = vadScore
 
         const nowMs = this._nowMs()
-        if (nowMs - this._lastVadLogAtMs < this._rnnoiseConfig.bufferOverflowMs) return
+        if (nowMs - this._lastVadLogAtMs < this._vadLogIntervalMs) return
 
         this._lastVadLogAtMs = nowMs
         this._logInfo("AUDIO_PIPELINE_RNNOISE_VAD", {
-            vadScore,
-            intervalMs: this._rnnoiseConfig.bufferOverflowMs,
+            vadScore: this._lastVadScore,
+            intervalMs: this._vadLogIntervalMs,
         })
     }
 
-    // ── Logging ────────────────────────────────────────────────────
+    // ── Logging ─────────────────────────────────────────────────────
 
     private _nowMs(): number {
         return typeof globalThis.performance?.now === "function"
@@ -455,21 +328,23 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
             : Date.now()
     }
 
+    private static readonly _LOG_TAG = "[AudioPipeline:Worklet]"
+
     private _logInfo(message: string, data?: unknown, forceLog = false): void {
         if (!forceLog && !this._debugLogs) return
 
         if (data !== undefined) {
-            console.log(`[AudioPipelineWorklet] ${message}`, data)
+            console.log(`${AudioPipelineWorklet._LOG_TAG} ${message}`, data)
         } else {
-            console.log(`[AudioPipelineWorklet] ${message}`)
+            console.log(`${AudioPipelineWorklet._LOG_TAG} ${message}`)
         }
     }
 
     private _logError(message: string, data?: unknown): void {
         if (data !== undefined) {
-            console.error(`[AudioPipelineWorklet] ${message}`, data)
+            console.error(`${AudioPipelineWorklet._LOG_TAG} ${message}`, data)
         } else {
-            console.error(`[AudioPipelineWorklet] ${message}`)
+            console.error(`${AudioPipelineWorklet._LOG_TAG} ${message}`)
         }
     }
 }

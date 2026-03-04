@@ -8,6 +8,7 @@ const __dirname = path.dirname(__filename)
 export default {
     entry: {
         AudioPipelineWorklet: "./src/AudioPipelineWorklet.ts",
+        AudioPipelineWorker: "./src/AudioPipelineWorker.ts",
     },
     target: "webworker",
     output: {

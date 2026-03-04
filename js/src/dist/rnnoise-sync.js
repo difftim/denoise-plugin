@@ -74,6 +74,50 @@ var readAsync, readBinary;
 
 if (ENVIRONMENT_IS_SHELL) {
   if ((typeof process == "object" && typeof require === "function") || typeof window == "object" || typeof WorkerGlobalScope != "undefined") throw new Error("not compiled for this environment (did you build to HTML and try to run it not on the web, or set ENVIRONMENT to something - like node - and run it someplace else - like on the web?)");
+  readBinary = f => {
+    if (typeof readbuffer == "function") {
+      return new Uint8Array(readbuffer(f));
+    }
+    let data = read(f, "binary");
+    assert(typeof data == "object");
+    return data;
+  };
+  readAsync = async f => readBinary(f);
+  globalThis.clearTimeout ??= id => {};
+  // spidermonkey lacks setTimeout but we use it above in readAsync.
+  globalThis.setTimeout ??= f => f();
+  // v8 uses `arguments_` whereas spidermonkey uses `scriptArgs`
+  arguments_ = globalThis.arguments || globalThis.scriptArgs;
+  if (typeof quit == "function") {
+    quit_ = (status, toThrow) => {
+      // Unlike node which has process.exitCode, d8 has no such mechanism. So we
+      // have no way to set the exit code and then let the program exit with
+      // that code when it naturally stops running (say, when all setTimeouts
+      // have completed). For that reason, we must call `quit` - the only way to
+      // set the exit code - but quit also halts immediately.  To increase
+      // consistency with node (and the web) we schedule the actual quit call
+      // using a setTimeout to give the current stack and any exception handlers
+      // a chance to run.  This enables features such as addOnPostRun (which
+      // expected to be able to run code after main returns).
+      setTimeout(() => {
+        if (!(toThrow instanceof ExitStatus)) {
+          let toLog = toThrow;
+          if (toThrow && typeof toThrow == "object" && toThrow.stack) {
+            toLog = [ toThrow, toThrow.stack ];
+          }
+          err(`exiting due to exception: ${toLog}`);
+        }
+        quit(status);
+      });
+      throw toThrow;
+    };
+  }
+  if (typeof print != "undefined") {
+    // Prefer to use print/printErr where they exist, as they usually work better.
+    globalThis.console ??= /** @type{!Console} */ ({});
+    console.log = /** @type{!function(this:Console, ...*): undefined} */ (print);
+    console.warn = console.error = /** @type{!function(this:Console, ...*): undefined} */ (globalThis.printErr ?? print);
+  }
 } else // Note that this includes Node.js workers when relevant (pthreads is enabled).
 // Node.js workers are detected as a combination of ENVIRONMENT_IS_WORKER and
 // ENVIRONMENT_IS_NODE.
@@ -198,8 +242,6 @@ var OPFS = "OPFS is no longer included by default; build with -lopfs.js";
 var NODEFS = "NODEFS is no longer included by default; build with -lnodefs.js";
 
 assert(!ENVIRONMENT_IS_NODE, "node environment detected but not enabled at build time.  Add `node` to `-sENVIRONMENT` to enable.");
-
-assert(!ENVIRONMENT_IS_SHELL, "shell environment detected but not enabled at build time.  Add `shell` to `-sENVIRONMENT` to enable.");
 
 // end include: shell.js
 // include: preamble.js
@@ -635,6 +677,9 @@ var wasmBinaryFile;
 function findWasmBinary() {
   if (Module["locateFile"]) {
     return locateFile("rnnoise-sync.wasm");
+  }
+  if (ENVIRONMENT_IS_SHELL) {
+    return "rnnoise-sync.wasm";
   }
   // Use bundler-friendly `new URL(..., import.meta.url)` pattern; works in browsers too.
   return new URL("rnnoise-sync.wasm", import.meta.url).href;

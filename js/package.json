@@ -1,7 +1,7 @@
 {
     "name": "@cc-livekit/audio-pipeline-plugin",
     "description": "A WebAssembly audio pipeline module for RNNoise and DeepFilterNet on web frontends.",
-    "version": "1.0.61",
+    "version": "1.0.11",
     "main": "./dist/index.cjs",
     "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
@@ -24,6 +24,7 @@
     },
     "files": [
         "dist/AudioPipelineWorklet.js",
+        "dist/AudioPipelineWorker.js",
         "dist/rnnoise.wasm",
         "dist/deepfilter.wasm",
         "dist/index.js",
@@ -43,6 +44,9 @@
         },
         "./AudioPipelineWorklet.js": {
             "default": "./dist/AudioPipelineWorklet.js"
+        },
+        "./AudioPipelineWorker.js": {
+            "default": "./dist/AudioPipelineWorker.js"
         }
     },
     "devDependencies": {

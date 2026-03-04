@@ -33,6 +33,7 @@ export interface ResolvedWasmUrls {
 
 export interface ResolvedAudioPipelineOptions {
     workletUrl: string
+    workerUrl: string
     wasmUrls: ResolvedWasmUrls
     debugLogs: boolean
     stages: {
@@ -265,12 +266,20 @@ export function resolveWasmUrls(workletUrl: string, wasmUrls?: WasmUrls): Resolv
     }
 }
 
+export const DEFAULT_WORKER_FILENAME = "AudioPipelineWorker.js"
+
+export function resolveWorkerUrl(workletUrl: string, workerUrl?: string): string {
+    if (workerUrl?.trim()) return workerUrl.trim()
+    return `${baseDir(workletUrl)}${DEFAULT_WORKER_FILENAME}`
+}
+
 export function normalizeAudioPipelineOptions(
     options: AudioPipelineOptions,
 ): ResolvedAudioPipelineOptions {
     const workletUrl = resolveWorkletUrl(options.workletUrl)
     return {
         workletUrl,
+        workerUrl: resolveWorkerUrl(workletUrl, options.workerUrl),
         wasmUrls: resolveWasmUrls(workletUrl, options.wasmUrls),
         debugLogs: Boolean(options.debugLogs),
         stages: {

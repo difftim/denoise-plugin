@@ -24,6 +24,7 @@ import {
     type ResolvedDeepFilterModuleConfig,
     type ResolvedWasmUrls,
 } from "./shared/normalize"
+import type { WorkerToWorkletMessage, WorkletToWorkerMessage } from "./shared/worker-contracts"
 
 interface PendingCommand {
     command: string
@@ -45,6 +46,7 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
     private _audioOpts?: AudioProcessorOptions | undefined
     private _workletNode?: AudioWorkletNode | undefined
     private _sourceNode?: MediaStreamAudioSourceNode | undefined
+    private _worker?: Worker | undefined
 
     private _enabled = true
     private _options: ResolvedAudioPipelineOptions
@@ -264,26 +266,54 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
             }
         }
 
-        const transferables: Transferable[] = [...wasmTransferables]
-        if (initModelBuffer) transferables.push(initModelBuffer)
+        this._worker = new Worker(this._options.workerUrl)
+
+        const channel = new MessageChannel()
+
+        this._worker.postMessage(
+            { type: "CONNECT_PORT", port: channel.port1 },
+            [channel.port1],
+        )
+
+        const workerInitMsg: WorkletToWorkerMessage = {
+            type: "INIT",
+            wasmBinaries,
+            moduleId: currentModule,
+            moduleConfigs: {
+                rnnoise: { ...this._options.moduleConfigs.rnnoise },
+                deepfilternet: {
+                    attenLimDb: deepConfig.attenLimDb,
+                    postFilterBeta: deepConfig.postFilterBeta,
+                    modelBuffer: initModelBuffer,
+                },
+            },
+            debugLogs: this._options.debugLogs,
+        }
+
+        const initTransferables: Transferable[] = [...wasmTransferables]
+        if (initModelBuffer) initTransferables.push(initModelBuffer)
+        channel.port2.postMessage(workerInitMsg, initTransferables)
+
+        const workerInfo = await this._waitForWorkerInit(channel.port2)
+        this._debug("worker init complete", workerInfo)
 
         await this._sendCommand(
             {
                 message: "INIT_PIPELINE",
                 enable: this._enabled,
                 debugLogs: this._options.debugLogs,
-                wasmBinaries,
+                workerPort: channel.port2,
+                frameLength: workerInfo.frameLength,
                 stages: { denoise: currentModule },
                 moduleConfigs: {
                     rnnoise: { ...this._options.moduleConfigs.rnnoise },
                     deepfilternet: {
                         attenLimDb: deepConfig.attenLimDb,
                         postFilterBeta: deepConfig.postFilterBeta,
-                        modelBuffer: initModelBuffer,
                     },
                 },
             },
-            transferables.length > 0 ? transferables : undefined,
+            [channel.port2],
         )
 
         this._sourceNode = ctx.createMediaStreamSource(new MediaStream([opts.track]))
@@ -322,6 +352,31 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
         }
     }
 
+    private _waitForWorkerInit(
+        port: MessagePort,
+    ): Promise<{ frameLength: number; lookahead: number }> {
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                port.onmessage = null
+                reject(new Error(`Worker init timeout after ${COMMAND_TIMEOUT_MS}ms`))
+            }, COMMAND_TIMEOUT_MS)
+
+            const prevHandler = port.onmessage
+            port.onmessage = (event: MessageEvent<WorkerToWorkletMessage>) => {
+                const msg = event.data
+                if (msg?.type === "INIT_OK") {
+                    clearTimeout(timeout)
+                    port.onmessage = prevHandler
+                    resolve({ frameLength: msg.frameLength, lookahead: msg.lookahead })
+                } else if (msg?.type === "ERROR") {
+                    clearTimeout(timeout)
+                    port.onmessage = prevHandler
+                    reject(new Error(`Worker init failed: ${msg.error}`))
+                }
+            }
+        })
+    }
+
     private _closeInternal(): void {
         if (this._workletNode) {
             try {
@@ -330,6 +385,16 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
                 // Ignore postMessage errors during teardown.
             }
             this._workletNode.port.onmessage = null
+        }
+
+        if (this._worker) {
+            try {
+                this._worker.postMessage({ type: "DESTROY" })
+            } catch {
+                // Ignore postMessage errors during teardown.
+            }
+            this._worker.terminate()
+            this._worker = undefined
         }
 
         this._rejectAllPendingCommands("Audio pipeline runtime closed")
@@ -354,19 +419,15 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
         const wasmBinaries: WasmBinaries = {}
         const wasmTransferables: ArrayBuffer[] = []
 
-        if (activeModule === "rnnoise" || activeModule === "deepfilternet") {
-            this._debug("fetching rnnoise wasm", urls.rnnoise)
-            const rnnoiseWasm = await this._fetchBinary(urls.rnnoise, "RNNoise WASM")
-            wasmBinaries.rnnoiseWasm = rnnoiseWasm
-            wasmTransferables.push(rnnoiseWasm)
-        }
+        this._debug("fetching rnnoise wasm", urls.rnnoise)
+        const rnnoiseWasm = await this._fetchBinary(urls.rnnoise, "RNNoise WASM")
+        wasmBinaries.rnnoiseWasm = rnnoiseWasm
+        wasmTransferables.push(rnnoiseWasm)
 
-        if (activeModule === "deepfilternet") {
-            this._debug("fetching deepfilter wasm", urls.deepfilter)
-            const deepfilterWasm = await this._fetchBinary(urls.deepfilter, "DeepFilter WASM")
-            wasmBinaries.deepfilterWasm = deepfilterWasm
-            wasmTransferables.push(deepfilterWasm)
-        }
+        this._debug("fetching deepfilter wasm", urls.deepfilter)
+        const deepfilterWasm = await this._fetchBinary(urls.deepfilter, "DeepFilter WASM")
+        wasmBinaries.deepfilterWasm = deepfilterWasm
+        wasmTransferables.push(deepfilterWasm)
 
         return { wasmBinaries, wasmTransferables }
     }
@@ -487,13 +548,15 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
 
     // ── Debug logging ──────────────────────────────────────────────
 
+    private static readonly _LOG_TAG = "[AudioPipeline:Main]"
+
     private _debug(action: string, data?: unknown): void {
         if (!this._options.debugLogs) return
 
         if (data !== undefined) {
-            console.log(`AudioPipelineTrackProcessor.${action}`, data)
+            console.log(`${AudioPipelineTrackProcessor._LOG_TAG} ${action}`, data)
         } else {
-            console.log(`AudioPipelineTrackProcessor.${action}`)
+            console.log(`${AudioPipelineTrackProcessor._LOG_TAG} ${action}`)
         }
     }
 }

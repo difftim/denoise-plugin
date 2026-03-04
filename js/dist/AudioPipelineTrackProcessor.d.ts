@@ -9,6 +9,7 @@ export declare class AudioPipelineTrackProcessor implements TrackProcessor<Track
     private _audioOpts?;
     private _workletNode?;
     private _sourceNode?;
+    private _worker?;
     private _enabled;
     private _options;
     private _nextRequestId;
@@ -31,6 +32,7 @@ export declare class AudioPipelineTrackProcessor implements TrackProcessor<Track
     private _applyDeepFilterConfig;
     private _initInternal;
     private _ensureWorkletLoaded;
+    private _waitForWorkerInit;
     private _closeInternal;
     private _fetchWasmBinaries;
     private _resolveModelBuffer;
@@ -41,5 +43,6 @@ export declare class AudioPipelineTrackProcessor implements TrackProcessor<Track
     private _resolvePending;
     private _rejectPending;
     private _rejectAllPendingCommands;
+    private static readonly _LOG_TAG;
     private _debug;
 }
