@@ -38,19 +38,23 @@ const LOG_TAG = "[AudioPipeline:Worker]"
 
 function logInfo(message: string, data?: unknown): void {
     if (!debugLogs) return
-    if (data !== undefined) {
-        console.log(`${LOG_TAG} ${message}`, data)
-    } else {
-        console.log(`${LOG_TAG} ${message}`)
-    }
+    port?.postMessage({
+        type: "LOG",
+        level: "info",
+        tag: LOG_TAG,
+        text: message,
+        data,
+    } satisfies WorkerToWorkletMessage)
 }
 
 function logError(message: string, data?: unknown): void {
-    if (data !== undefined) {
-        console.error(`${LOG_TAG} ${message}`, data)
-    } else {
-        console.error(`${LOG_TAG} ${message}`)
-    }
+    port?.postMessage({
+        type: "LOG",
+        level: "error",
+        tag: LOG_TAG,
+        text: message,
+        data,
+    } satisfies WorkerToWorkletMessage)
 }
 
 function respond(msg: WorkerToWorkletMessage, transfer?: Transferable[]): void {
@@ -122,6 +126,7 @@ function swapModule(moduleId: DenoiseModuleId): { frameLength: number; lookahead
 }
 
 function handleInit(msg: Extract<WorkletToWorkerMessage, { type: "INIT" }>): void {
+    const t0 = performance.now()
     debugLogs = msg.debugLogs ?? false
     currentModuleId = resolveDenoiseModule(msg.moduleId)
 
@@ -141,7 +146,7 @@ function handleInit(msg: Extract<WorkletToWorkerMessage, { type: "INIT" }>): voi
         lookahead: info.lookahead,
     })
 
-    logInfo("WORKER_READY")
+    logInfo("WORKER_READY", { elapsed: `${(performance.now() - t0).toFixed(2)}ms` })
 }
 
 function handleProcessFrame(msg: Extract<WorkletToWorkerMessage, { type: "PROCESS_FRAME" }>): void {
@@ -172,10 +177,7 @@ function handleProcessFrame(msg: Extract<WorkletToWorkerMessage, { type: "PROCES
             const output = outputPool.acquire()
             const vadScore = denoiseModule.processFrame(singleIn, output)
 
-            respond(
-                { type: "FRAME_RESULT", outputBuffer: output, vadScore },
-                [output.buffer],
-            )
+            respond({ type: "FRAME_RESULT", outputBuffer: output, vadScore }, [output.buffer])
         }
     } catch (error) {
         respondError(error)
@@ -183,6 +185,7 @@ function handleProcessFrame(msg: Extract<WorkletToWorkerMessage, { type: "PROCES
 }
 
 function handleSetModule(msg: Extract<WorkletToWorkerMessage, { type: "SET_MODULE" }>): void {
+    const t0 = performance.now()
     const nextId = resolveDenoiseModule(msg.moduleId)
 
     if (msg.config?.rnnoise) {
@@ -198,6 +201,9 @@ function handleSetModule(msg: Extract<WorkletToWorkerMessage, { type: "SET_MODUL
         denoiseModule instanceof RnnoiseModule
     ) {
         denoiseModule.updateConfig(rnnoiseConfig)
+        logInfo("SET_MODULE (same rnnoise, config only)", {
+            elapsed: `${(performance.now() - t0).toFixed(2)}ms`,
+        })
         return
     }
 
@@ -207,14 +213,23 @@ function handleSetModule(msg: Extract<WorkletToWorkerMessage, { type: "SET_MODUL
         denoiseModule instanceof DeepFilterModule
     ) {
         applyDeepFilterUpdate()
+        logInfo("SET_MODULE (same deepfilternet, config only)", {
+            elapsed: `${(performance.now() - t0).toFixed(2)}ms`,
+        })
         return
     }
 
     const info = swapModule(nextId)
+    logInfo("SET_MODULE (swap)", {
+        to: nextId,
+        elapsed: `${(performance.now() - t0).toFixed(2)}ms`,
+    })
     respond({ type: "MODULE_CHANGED", frameLength: info.frameLength, lookahead: info.lookahead })
 }
 
 function handleSetConfig(msg: Extract<WorkletToWorkerMessage, { type: "SET_CONFIG" }>): void {
+    const t0 = performance.now()
+
     if (msg.moduleId === "rnnoise") {
         rnnoiseConfig = mergeRnnoiseConfig(
             rnnoiseConfig,
@@ -223,6 +238,7 @@ function handleSetConfig(msg: Extract<WorkletToWorkerMessage, { type: "SET_CONFI
         if (denoiseModule instanceof RnnoiseModule && currentModuleId === "rnnoise") {
             denoiseModule.updateConfig(rnnoiseConfig)
         }
+        logInfo("SET_CONFIG rnnoise", { elapsed: `${(performance.now() - t0).toFixed(2)}ms` })
         return
     }
 
@@ -230,6 +246,7 @@ function handleSetConfig(msg: Extract<WorkletToWorkerMessage, { type: "SET_CONFI
     if (denoiseModule instanceof DeepFilterModule && currentModuleId === "deepfilternet") {
         applyDeepFilterUpdate()
     }
+    logInfo("SET_CONFIG deepfilternet", { elapsed: `${(performance.now() - t0).toFixed(2)}ms` })
 }
 
 function applyDeepFilterUpdate(): void {

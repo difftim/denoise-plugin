@@ -1,5 +1,6 @@
 import type { DenoiseModuleId } from "./options"
 import type {
+    LogMessage,
     MainToWorkletMessage,
     WorkletDeepFilterConfigPayload,
     WorkletRnnoiseConfigPayload,
@@ -13,6 +14,7 @@ import type { WorkerToWorkletMessage, WorkletToWorkerMessage } from "./shared/wo
 const QUANTUM_SAMPLES = 128
 const DEFAULT_FRAME_LENGTH = 480
 const FRAMES_PER_TRANSFER = 1
+const DEFAULT_VAD_LOG_INTERVAL_MS = 1000
 
 class AudioPipelineWorklet extends AudioWorkletProcessor {
     private _messageChain: Promise<void> = Promise.resolve()
@@ -21,6 +23,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     private _destroyed = false
     private _shouldProcess = true
     private _workerReady = false
+    private _switchingModule = false
 
     private _currentModuleId: DenoiseModuleId = "rnnoise"
     private _frameLength = DEFAULT_FRAME_LENGTH
@@ -35,7 +38,8 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
     private _lastVadScore: number | undefined
     private _lastVadLogAtMs = 0
-    private _vadLogIntervalMs = 1000
+    private _vadLogIntervalMs = DEFAULT_VAD_LOG_INTERVAL_MS
+    private _vadLogsEnabled = false
 
     constructor(options: { processorOptions?: { debugLogs?: boolean } }) {
         super()
@@ -46,6 +50,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
     process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
         if (this._destroyed) return false
+        if (this._switchingModule) return true
 
         const inputMono = inputs[0]?.[0]
         const outputMono = outputs[0]?.[0]
@@ -94,6 +99,8 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     private async _dispatch(payload: MainToWorkletMessage): Promise<void> {
         if (!payload?.message) return
 
+        const t0 = this._nowMs()
+
         switch (payload.message) {
             case "INIT_PIPELINE":
                 this._initPipeline(payload)
@@ -116,6 +123,9 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
                 )
         }
 
+        this._logInfo(`${payload.message} dispatch`, {
+            elapsed: `${(this._nowMs() - t0).toFixed(2)}ms`,
+        })
         this._respondOk(payload.requestId, payload.message)
     }
 
@@ -128,9 +138,9 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         this._currentModuleId = resolveDenoiseModule(payload.stages?.denoise)
         this._shouldProcess = payload.enable ?? this._shouldProcess
 
-        if (payload.moduleConfigs?.rnnoise?.bufferOverflowMs) {
-            this._vadLogIntervalMs = payload.moduleConfigs.rnnoise.bufferOverflowMs
-        }
+        this._vadLogIntervalMs =
+            payload.moduleConfigs?.rnnoise?.bufferOverflowMs ?? DEFAULT_VAD_LOG_INTERVAL_MS
+        this._vadLogsEnabled = payload.moduleConfigs?.rnnoise?.vadLogs ?? false
 
         if (payload.workerPort) {
             this._workerPort = payload.workerPort
@@ -163,6 +173,9 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
                 case "ERROR":
                     this._logError(`WORKER_ERROR:${msg.error}`)
                     break
+                case "LOG":
+                    this._forwardLog(msg.level, msg.tag, msg.text, msg.data)
+                    break
             }
         }
     }
@@ -180,11 +193,14 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     }
 
     private _onModuleChanged(frameLength: number, _lookahead: number): void {
+        const wasSwitching = this._switchingModule
+        this._switchingModule = false
+
         if (frameLength !== this._frameLength) {
             this._frameLength = frameLength
             this._rebuildForFrameLength(frameLength)
         }
-        this._logInfo("MODULE_CHANGED", { frameLength })
+        this._logInfo("MODULE_CHANGED", { frameLength, resumed: wasSwitching })
     }
 
     private _rebuildForFrameLength(frameLength: number): void {
@@ -241,6 +257,9 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
         const nextId = resolveDenoiseModule(payload.moduleId)
         this._currentModuleId = nextId
+        this._switchingModule = true
+
+        this._logInfo("MODULE_SWITCH_START", { from: this._currentModuleId, to: nextId })
 
         this._workerPort?.postMessage({
             type: "SET_MODULE",
@@ -311,7 +330,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     // ── VAD ─────────────────────────────────────────────────────────
 
     private _maybeEmitVadLog(vadScore: number | undefined): void {
-        if (!this._debugLogs || this._currentModuleId !== "rnnoise") return
+        if (!this._debugLogs || this._currentModuleId !== "rnnoise" || !this._vadLogsEnabled) return
         if (!Number.isFinite(vadScore)) return
 
         this._lastVadScore = vadScore
@@ -336,22 +355,26 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
     private static readonly _LOG_TAG = "[AudioPipeline:Worklet]"
 
-    private _logInfo(message: string, data?: unknown, forceLog = false): void {
-        if (!forceLog && !this._debugLogs) return
-
-        if (data !== undefined) {
-            console.log(`${AudioPipelineWorklet._LOG_TAG} ${message}`, data)
-        } else {
-            console.log(`${AudioPipelineWorklet._LOG_TAG} ${message}`)
+    private _postLog(level: "info" | "error", tag: string, text: string, data?: unknown): void {
+        const payload: LogMessage = { message: "LOG", level, tag, text, data }
+        try {
+            this.port.postMessage(payload)
+        } catch {
+            // port may be closed during teardown
         }
     }
 
+    private _forwardLog(level: "info" | "error", tag: string, text: string, data?: unknown): void {
+        this._postLog(level, tag, text, data)
+    }
+
+    private _logInfo(message: string, data?: unknown, forceLog = false): void {
+        if (!forceLog && !this._debugLogs) return
+        this._postLog("info", AudioPipelineWorklet._LOG_TAG, message, data)
+    }
+
     private _logError(message: string, data?: unknown): void {
-        if (data !== undefined) {
-            console.error(`${AudioPipelineWorklet._LOG_TAG} ${message}`, data)
-        } else {
-            console.error(`${AudioPipelineWorklet._LOG_TAG} ${message}`)
-        }
+        this._postLog("error", AudioPipelineWorklet._LOG_TAG, message, data)
     }
 }
 

@@ -254,8 +254,10 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
         const currentModule = this._options.stages.denoise
         const deepConfig = this._options.moduleConfigs.deepfilternet
 
-        const { wasmBinaries, wasmTransferables } =
-            await this._fetchWasmBinaries(this._options.wasmUrls, currentModule)
+        const { wasmBinaries, wasmTransferables } = await this._fetchWasmBinaries(
+            this._options.wasmUrls,
+            currentModule,
+        )
 
         let initModelBuffer: ArrayBuffer | undefined
         if (currentModule === "deepfilternet") {
@@ -270,10 +272,7 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
 
         const channel = new MessageChannel()
 
-        this._worker.postMessage(
-            { type: "CONNECT_PORT", port: channel.port1 },
-            [channel.port1],
-        )
+        this._worker.postMessage({ type: "CONNECT_PORT", port: channel.port1 }, [channel.port1])
 
         const workerInitMsg: WorkletToWorkerMessage = {
             type: "INIT",
@@ -355,6 +354,8 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
     private _waitForWorkerInit(
         port: MessagePort,
     ): Promise<{ frameLength: number; lookahead: number }> {
+        const t0 = performance.now()
+
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
                 port.onmessage = null
@@ -367,6 +368,7 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
                 if (msg?.type === "INIT_OK") {
                     clearTimeout(timeout)
                     port.onmessage = prevHandler
+                    this._debug("worker INIT_OK", `${(performance.now() - t0).toFixed(2)}ms`)
                     resolve({ frameLength: msg.frameLength, lookahead: msg.lookahead })
                 } else if (msg?.type === "ERROR") {
                     clearTimeout(timeout)
@@ -460,6 +462,25 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
             this._resolvePending(payload.requestId)
         } else if (payload.message === "COMMAND_ERROR") {
             this._rejectPending(payload)
+        } else if (payload.message === "LOG") {
+            this._handleLog(payload)
+        }
+    }
+
+    private _handleLog(payload: Extract<RuntimeMessage, { message: "LOG" }>): void {
+        const prefix = `${payload.tag} ${payload.text}`
+        if (payload.level === "error") {
+            if (payload.data !== undefined) {
+                console.error(prefix, payload.data)
+            } else {
+                console.error(prefix)
+            }
+        } else {
+            if (payload.data !== undefined) {
+                console.log(prefix, payload.data)
+            } else {
+                console.log(prefix)
+            }
         }
     }
 
@@ -481,6 +502,7 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
         }
 
         const requestId = this._nextRequestId++
+        const t0 = performance.now()
 
         await new Promise<void>((resolve, reject) => {
             const timeoutId = setTimeout(() => {
@@ -505,6 +527,8 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
                 reject(error instanceof Error ? error : new Error(String(error)))
             }
         })
+
+        this._debug(`${message.message} round-trip`, `${(performance.now() - t0).toFixed(2)}ms`)
     }
 
     private _resolvePending(requestId?: number): void {

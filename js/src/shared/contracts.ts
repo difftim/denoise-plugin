@@ -89,6 +89,14 @@ export interface CommandErrorMessage {
     error?: string
 }
 
-export type WorkletToMainMessage = CommandOkMessage | CommandErrorMessage
+export interface LogMessage {
+    message: "LOG"
+    level: "info" | "error"
+    tag: string
+    text: string
+    data?: unknown
+}
+
+export type WorkletToMainMessage = CommandOkMessage | CommandErrorMessage | LogMessage
 
 export type RuntimeMessage = WorkletToMainMessage

@@ -48,4 +48,11 @@ export interface WorkerErrorMessage {
     type: "ERROR";
     error: string;
 }
-export type WorkerToWorkletMessage = WorkerInitOkMessage | WorkerFrameResultMessage | WorkerModuleChangedMessage | WorkerErrorMessage;
+export interface WorkerLogMessage {
+    type: "LOG";
+    level: "info" | "error";
+    tag: string;
+    text: string;
+    data?: unknown;
+}
+export type WorkerToWorkletMessage = WorkerInitOkMessage | WorkerFrameResultMessage | WorkerModuleChangedMessage | WorkerErrorMessage | WorkerLogMessage;

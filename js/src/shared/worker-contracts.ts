@@ -70,8 +70,17 @@ export interface WorkerErrorMessage {
     error: string
 }
 
+export interface WorkerLogMessage {
+    type: "LOG"
+    level: "info" | "error"
+    tag: string
+    text: string
+    data?: unknown
+}
+
 export type WorkerToWorkletMessage =
     | WorkerInitOkMessage
     | WorkerFrameResultMessage
     | WorkerModuleChangedMessage
     | WorkerErrorMessage
+    | WorkerLogMessage

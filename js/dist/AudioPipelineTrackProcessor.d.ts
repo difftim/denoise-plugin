@@ -38,6 +38,7 @@ export declare class AudioPipelineTrackProcessor implements TrackProcessor<Track
     private _resolveModelBuffer;
     private _fetchBinary;
     private readonly _handleRuntimeMessage;
+    private _handleLog;
     private _runSerial;
     private _sendCommand;
     private _resolvePending;
