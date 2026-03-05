@@ -34,7 +34,8 @@ let lastDfModelBytes: Uint8Array | undefined
 let rnnoiseModule: RnnoiseModule | undefined
 let deepFilterModule: DeepFilterModule | undefined
 
-let outputPool = new BufferPool(480, 8)
+let outputPool = new BufferPool(480)
+let poolLogCounter = 0
 
 const LOG_TAG = "[AudioPipeline:Worker]"
 
@@ -101,7 +102,9 @@ function initAllModules(): void {
         logInfo("PRE_INIT deepfilternet", { elapsed: `${(performance.now() - t1).toFixed(2)}ms` })
     }
 
-    logInfo("PRE_INIT all modules done", { totalElapsed: `${(performance.now() - t0).toFixed(2)}ms` })
+    logInfo("PRE_INIT all modules done", {
+        totalElapsed: `${(performance.now() - t0).toFixed(2)}ms`,
+    })
 }
 
 function activateModule(moduleId: DenoiseModuleId): { frameLength: number; lookahead: number } {
@@ -143,14 +146,32 @@ function handleInit(msg: Extract<WorkletToWorkerMessage, { type: "INIT" }>): voi
     logInfo("WORKER_READY", { elapsed: `${(performance.now() - t0).toFixed(2)}ms` })
 }
 
+function recycleReturnedOutputBuffers(buffers: Float32Array[] | undefined): void {
+    if (!buffers) return
+    for (const buf of buffers) outputPool.release(buf)
+}
+
+function maybeLogPoolStats(): void {
+    if (!debugLogs) return
+    poolLogCounter++
+    if (poolLogCounter % 500 !== 0) return
+    logInfo("WORKER_OUTPUT_POOL_STATS", outputPool.stats())
+}
+
 function handleProcessFrame(msg: Extract<WorkletToWorkerMessage, { type: "PROCESS_FRAME" }>): void {
+    recycleReturnedOutputBuffers(msg.returnedOutputBuffers)
+
     const input = msg.inputBuffer
     const denoiseModule = getActiveModule()
 
     if (!processingEnabled || !denoiseModule) {
         const output = outputPool.acquire()
         output.set(input.length <= output.length ? input : input.subarray(0, output.length))
-        respond({ type: "FRAME_RESULT", outputBuffer: output }, [output.buffer])
+        respond({ type: "FRAME_RESULT", outputBuffer: output, returnedInputBuffer: input }, [
+            output.buffer,
+            input.buffer,
+        ])
+        // maybeLogPoolStats()
         return
     }
 
@@ -172,11 +193,26 @@ function handleProcessFrame(msg: Extract<WorkletToWorkerMessage, { type: "PROCES
             const output = outputPool.acquire()
             const vadScore = denoiseModule.processFrame(singleIn, output)
 
-            respond({ type: "FRAME_RESULT", outputBuffer: output, vadScore }, [output.buffer])
+            const isLastFrame = i === numFrames - 1
+            if (isLastFrame) {
+                respond(
+                    {
+                        type: "FRAME_RESULT",
+                        outputBuffer: output,
+                        vadScore,
+                        returnedInputBuffer: input,
+                    },
+                    [output.buffer, input.buffer],
+                )
+            } else {
+                respond({ type: "FRAME_RESULT", outputBuffer: output, vadScore }, [output.buffer])
+            }
         }
     } catch (error) {
         respondError(error)
     }
+
+    // maybeLogPoolStats()
 }
 
 function handleSetModule(msg: Extract<WorkletToWorkerMessage, { type: "SET_MODULE" }>): void {

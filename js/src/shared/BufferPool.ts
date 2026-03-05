@@ -1,8 +1,19 @@
+export interface BufferPoolStats {
+    poolSize: number
+    frameSize: number
+    hits: number
+    misses: number
+    total: number
+    hitRate: string
+}
+
 export class BufferPool {
     private _pool: Float32Array[] = []
     private readonly _frameSize: number
+    private _hits = 0
+    private _misses = 0
 
-    constructor(frameSize: number, preAllocate = 8) {
+    constructor(frameSize: number, preAllocate = 32) {
         this._frameSize = frameSize
         for (let i = 0; i < preAllocate; i++) {
             this._pool.push(new Float32Array(frameSize))
@@ -10,7 +21,13 @@ export class BufferPool {
     }
 
     acquire(): Float32Array {
-        return this._pool.pop() ?? new Float32Array(this._frameSize)
+        const buf = this._pool.pop()
+        if (buf) {
+            this._hits++
+            return buf
+        }
+        this._misses++
+        return new Float32Array(this._frameSize)
     }
 
     release(buffer: Float32Array): void {
@@ -21,6 +38,23 @@ export class BufferPool {
 
     resize(newFrameSize: number): BufferPool {
         if (newFrameSize === this._frameSize) return this
-        return new BufferPool(newFrameSize, this._pool.length || 8)
+        return new BufferPool(newFrameSize, this._pool.length || 32)
+    }
+
+    stats(): BufferPoolStats {
+        const total = this._hits + this._misses
+        return {
+            poolSize: this._pool.length,
+            frameSize: this._frameSize,
+            hits: this._hits,
+            misses: this._misses,
+            total,
+            hitRate: total > 0 ? `${((this._hits / total) * 100).toFixed(1)}%` : "N/A",
+        }
+    }
+
+    resetStats(): void {
+        this._hits = 0
+        this._misses = 0
     }
 }
