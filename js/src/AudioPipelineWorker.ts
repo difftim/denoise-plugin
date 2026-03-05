@@ -22,7 +22,6 @@ let port: MessagePort | undefined
 let debugLogs = false
 
 let currentModuleId: DenoiseModuleId = "rnnoise"
-let denoiseModule: ActiveDenoiseModule | undefined
 let processingEnabled = true
 
 let rnnoiseWasm: ArrayBuffer | undefined
@@ -31,6 +30,9 @@ let deepfilterWasm: ArrayBuffer | undefined
 let rnnoiseConfig: ResolvedRnnoiseModuleConfig = normalizeRnnoiseConfig()
 let deepFilterState: WorkletDeepFilterState = defaultWorkletDeepFilterState()
 let lastDfModelBytes: Uint8Array | undefined
+
+let rnnoiseModule: RnnoiseModule | undefined
+let deepFilterModule: DeepFilterModule | undefined
 
 let outputPool = new BufferPool(480, 8)
 
@@ -80,48 +82,39 @@ function cloneBuffer(buf?: ArrayBuffer): ArrayBuffer | undefined {
     return buf && buf.byteLength > 0 ? buf.slice(0) : undefined
 }
 
-function createDenoiseModule(moduleId: DenoiseModuleId): ActiveDenoiseModule {
-    if (moduleId === "deepfilternet") {
-        return new DeepFilterModule(deepFilterState, cloneBuffer(deepfilterWasm))
-    }
-    return new RnnoiseModule(rnnoiseConfig, cloneBuffer(rnnoiseWasm))
+function getActiveModule(): ActiveDenoiseModule | undefined {
+    return currentModuleId === "deepfilternet" ? deepFilterModule : rnnoiseModule
 }
 
-function warmUpModule(module: ActiveDenoiseModule): void {
-    if (!(module instanceof DeepFilterModule) || module.lookahead <= 0) return
+function initAllModules(): void {
+    const t0 = performance.now()
 
-    const frameLength = module.frameLength
-    const silentInput = new Float32Array(frameLength)
-    const discardOutput = new Float32Array(frameLength)
-
-    for (let i = 0; i < module.lookahead; i++) {
-        module.processFrame(silentInput, discardOutput)
+    if (!rnnoiseModule) {
+        rnnoiseModule = new RnnoiseModule(rnnoiseConfig, cloneBuffer(rnnoiseWasm))
+        logInfo("PRE_INIT rnnoise", { elapsed: `${(performance.now() - t0).toFixed(2)}ms` })
     }
 
-    logInfo("WORKER_WARMUP", { frameLength, lookahead: module.lookahead })
-}
-
-function swapModule(moduleId: DenoiseModuleId): { frameLength: number; lookahead: number } {
-    const previous = denoiseModule
-
-    const nextModule = createDenoiseModule(moduleId)
-    denoiseModule = nextModule
-    currentModuleId = moduleId
-
-    if (nextModule instanceof DeepFilterModule) {
+    const t1 = performance.now()
+    if (!deepFilterModule) {
+        deepFilterModule = new DeepFilterModule(deepFilterState, cloneBuffer(deepfilterWasm))
         lastDfModelBytes = cloneBytes(deepFilterState.modelBytes)
+        logInfo("PRE_INIT deepfilternet", { elapsed: `${(performance.now() - t1).toFixed(2)}ms` })
     }
 
-    // warmUpModule(nextModule)
-    previous?.dispose()
+    logInfo("PRE_INIT all modules done", { totalElapsed: `${(performance.now() - t0).toFixed(2)}ms` })
+}
 
-    outputPool = outputPool.resize(nextModule.frameLength)
+function activateModule(moduleId: DenoiseModuleId): { frameLength: number; lookahead: number } {
+    currentModuleId = moduleId
+    const active = getActiveModule()!
 
-    logInfo(`WORKER_MODULE_ACTIVE:${moduleId}`, { frameLength: nextModule.frameLength })
+    outputPool = outputPool.resize(active.frameLength)
+
+    logInfo(`MODULE_ACTIVE:${moduleId}`, { frameLength: active.frameLength })
 
     return {
-        frameLength: nextModule.frameLength,
-        lookahead: nextModule instanceof DeepFilterModule ? nextModule.lookahead : 0,
+        frameLength: active.frameLength,
+        lookahead: active instanceof DeepFilterModule ? active.lookahead : 0,
     }
 }
 
@@ -138,7 +131,8 @@ function handleInit(msg: Extract<WorkletToWorkerMessage, { type: "INIT" }>): voi
         msg.moduleConfigs?.deepfilternet,
     )
 
-    const info = swapModule(currentModuleId)
+    initAllModules()
+    const info = activateModule(currentModuleId)
 
     respond({
         type: "INIT_OK",
@@ -151,6 +145,7 @@ function handleInit(msg: Extract<WorkletToWorkerMessage, { type: "INIT" }>): voi
 
 function handleProcessFrame(msg: Extract<WorkletToWorkerMessage, { type: "PROCESS_FRAME" }>): void {
     const input = msg.inputBuffer
+    const denoiseModule = getActiveModule()
 
     if (!processingEnabled || !denoiseModule) {
         const output = outputPool.acquire()
@@ -190,37 +185,25 @@ function handleSetModule(msg: Extract<WorkletToWorkerMessage, { type: "SET_MODUL
 
     if (msg.config?.rnnoise) {
         rnnoiseConfig = mergeRnnoiseConfig(rnnoiseConfig, msg.config.rnnoise)
+        rnnoiseModule?.updateConfig(rnnoiseConfig)
     }
     if (msg.config?.deepfilternet) {
         deepFilterState = mergeWorkletDeepFilterState(deepFilterState, msg.config.deepfilternet)
+        if (deepFilterModule) {
+            applyDeepFilterUpdate()
+        }
     }
 
-    if (
-        nextId === currentModuleId &&
-        nextId === "rnnoise" &&
-        denoiseModule instanceof RnnoiseModule
-    ) {
-        denoiseModule.updateConfig(rnnoiseConfig)
-        logInfo("SET_MODULE (same rnnoise, config only)", {
+    if (nextId === currentModuleId) {
+        logInfo("SET_MODULE (same module, config only)", {
+            moduleId: nextId,
             elapsed: `${(performance.now() - t0).toFixed(2)}ms`,
         })
         return
     }
 
-    if (
-        nextId === currentModuleId &&
-        nextId === "deepfilternet" &&
-        denoiseModule instanceof DeepFilterModule
-    ) {
-        applyDeepFilterUpdate()
-        logInfo("SET_MODULE (same deepfilternet, config only)", {
-            elapsed: `${(performance.now() - t0).toFixed(2)}ms`,
-        })
-        return
-    }
-
-    const info = swapModule(nextId)
-    logInfo("SET_MODULE (swap)", {
+    const info = activateModule(nextId)
+    logInfo("SET_MODULE (switch)", {
         to: nextId,
         elapsed: `${(performance.now() - t0).toFixed(2)}ms`,
     })
@@ -235,42 +218,44 @@ function handleSetConfig(msg: Extract<WorkletToWorkerMessage, { type: "SET_CONFI
             rnnoiseConfig,
             msg.config as Partial<ResolvedRnnoiseModuleConfig>,
         )
-        if (denoiseModule instanceof RnnoiseModule && currentModuleId === "rnnoise") {
-            denoiseModule.updateConfig(rnnoiseConfig)
-        }
+        rnnoiseModule?.updateConfig(rnnoiseConfig)
         logInfo("SET_CONFIG rnnoise", { elapsed: `${(performance.now() - t0).toFixed(2)}ms` })
         return
     }
 
     deepFilterState = mergeWorkletDeepFilterState(deepFilterState, msg.config)
-    if (denoiseModule instanceof DeepFilterModule && currentModuleId === "deepfilternet") {
+    if (deepFilterModule) {
         applyDeepFilterUpdate()
     }
     logInfo("SET_CONFIG deepfilternet", { elapsed: `${(performance.now() - t0).toFixed(2)}ms` })
 }
 
 function applyDeepFilterUpdate(): void {
-    const dfModule = denoiseModule as DeepFilterModule
+    if (!deepFilterModule) return
+
     const modelChanged = !sameBytes(lastDfModelBytes, deepFilterState.modelBytes)
-    dfModule.updateConfig(deepFilterState)
+    deepFilterModule.updateConfig(deepFilterState)
 
     if (modelChanged) {
         lastDfModelBytes = cloneBytes(deepFilterState.modelBytes)
-        // warmUpModule(dfModule)
 
-        const newFrameLength = dfModule.frameLength
-        outputPool = outputPool.resize(newFrameLength)
-        respond({
-            type: "MODULE_CHANGED",
-            frameLength: newFrameLength,
-            lookahead: dfModule.lookahead,
-        })
+        const newFrameLength = deepFilterModule.frameLength
+        if (currentModuleId === "deepfilternet") {
+            outputPool = outputPool.resize(newFrameLength)
+            respond({
+                type: "MODULE_CHANGED",
+                frameLength: newFrameLength,
+                lookahead: deepFilterModule.lookahead,
+            })
+        }
     }
 }
 
 function handleDestroy(): void {
-    denoiseModule?.dispose()
-    denoiseModule = undefined
+    rnnoiseModule?.dispose()
+    deepFilterModule?.dispose()
+    rnnoiseModule = undefined
+    deepFilterModule = undefined
     logInfo("WORKER_DESTROYED")
 }
 
