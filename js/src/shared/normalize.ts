@@ -3,7 +3,6 @@ import type {
     DenoiseModuleId,
     DeepFilterModuleConfig,
     RnnoiseModuleConfig,
-    WasmUrls,
 } from "../options"
 
 export const DEFAULT_DENOISE_MODULE: DenoiseModuleId = "rnnoise"
@@ -26,7 +25,7 @@ export interface ResolvedDeepFilterModuleConfig {
 export const DEFAULT_RNNOISE_WASM_FILENAME = "rnnoise.wasm"
 export const DEFAULT_DEEPFILTER_WASM_FILENAME = "deepfilter.wasm"
 
-export interface ResolvedWasmUrls {
+export interface InternalWasmUrls {
     rnnoise: string
     deepfilter: string
 }
@@ -34,7 +33,7 @@ export interface ResolvedWasmUrls {
 export interface ResolvedAudioPipelineOptions {
     workletUrl: string
     workerUrl: string
-    wasmUrls: ResolvedWasmUrls
+    wasmUrls: InternalWasmUrls
     debugLogs: boolean
     stages: {
         denoise: DenoiseModuleId
@@ -51,17 +50,6 @@ export function cloneArrayBuffer(buffer: ArrayBuffer): ArrayBuffer {
 
 export function cloneBytes(bytes?: Uint8Array): Uint8Array | undefined {
     return bytes ? bytes.slice(0) : undefined
-}
-
-export function sameBytes(left?: Uint8Array, right?: Uint8Array): boolean {
-    if (left === right) return true
-    if (!left || !right) return false
-    if (left.byteLength !== right.byteLength) return false
-
-    for (let i = 0; i < left.byteLength; i += 1) {
-        if (left[i] !== right[i]) return false
-    }
-    return true
 }
 
 export function normalizeModelUrl(value?: string): string | undefined {
@@ -258,11 +246,11 @@ function baseDir(url: string): string {
     return idx >= 0 ? url.substring(0, idx + 1) : "./"
 }
 
-export function resolveWasmUrls(workletUrl: string, wasmUrls?: WasmUrls): ResolvedWasmUrls {
+function resolveInternalWasmUrls(workletUrl: string): InternalWasmUrls {
     const base = baseDir(workletUrl)
     return {
-        rnnoise: wasmUrls?.rnnoise?.trim() || `${base}${DEFAULT_RNNOISE_WASM_FILENAME}`,
-        deepfilter: wasmUrls?.deepfilter?.trim() || `${base}${DEFAULT_DEEPFILTER_WASM_FILENAME}`,
+        rnnoise: `${base}${DEFAULT_RNNOISE_WASM_FILENAME}`,
+        deepfilter: `${base}${DEFAULT_DEEPFILTER_WASM_FILENAME}`,
     }
 }
 
@@ -280,7 +268,7 @@ export function normalizeAudioPipelineOptions(
     return {
         workletUrl,
         workerUrl: resolveWorkerUrl(workletUrl, options.workerUrl),
-        wasmUrls: resolveWasmUrls(workletUrl, options.wasmUrls),
+        wasmUrls: resolveInternalWasmUrls(workletUrl),
         debugLogs: Boolean(options.debugLogs),
         stages: {
             denoise: resolveDenoiseModule(options.stages?.denoise),

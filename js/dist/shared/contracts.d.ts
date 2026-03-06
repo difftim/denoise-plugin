@@ -37,7 +37,6 @@ export interface SetStageModuleMessage extends BaseMainToWorkletMessage {
     message: "SET_STAGE_MODULE";
     stage: PipelineStage;
     moduleId: DenoiseModuleId;
-    config?: WorkletModuleConfigPayload;
 }
 export interface SetModuleConfigMessage extends BaseMainToWorkletMessage {
     message: "SET_MODULE_CONFIG";

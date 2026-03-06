@@ -1,18 +1,16 @@
 import type { DenoiseModuleId } from "./options"
 import type { WasmBinaries, WorkletModuleConfigPayloadMap } from "./shared/contracts"
 import {
-    cloneBytes,
     defaultWorkletDeepFilterState,
     mergeRnnoiseConfig,
     mergeWorkletDeepFilterState,
     normalizeRnnoiseConfig,
     resolveDenoiseModule,
-    sameBytes,
     type ResolvedRnnoiseModuleConfig,
     type WorkletDeepFilterState,
 } from "./shared/normalize"
 import type { WorkerToWorkletMessage, WorkletToWorkerMessage } from "./shared/worker-contracts"
-import { DeepFilterModule, initDeepFilterWasm } from "./worklet/modules/DeepFilterModule"
+import { DeepFilterModule } from "./worklet/modules/DeepFilterModule"
 import { RnnoiseModule } from "./worklet/modules/RnnoiseModule"
 
 type ActiveDenoiseModule = RnnoiseModule | DeepFilterModule
@@ -23,12 +21,8 @@ let debugLogs = false
 let currentModuleId: DenoiseModuleId = "rnnoise"
 let processingEnabled = true
 
-let rnnoiseWasm: ArrayBuffer | undefined
-let deepfilterWasm: ArrayBuffer | undefined
-
 let rnnoiseConfig: ResolvedRnnoiseModuleConfig = normalizeRnnoiseConfig()
 let deepFilterState: WorkletDeepFilterState = defaultWorkletDeepFilterState()
-let lastDfModelBytes: Uint8Array | undefined
 
 let rnnoiseModule: RnnoiseModule | undefined
 let deepFilterModule: DeepFilterModule | undefined
@@ -66,35 +60,21 @@ function respondError(error: unknown): void {
     respond({ type: "ERROR", error: msg })
 }
 
-function storeWasmBinaries(binaries?: WasmBinaries): void {
-    if (!binaries) return
-    if (binaries.rnnoiseWasm) rnnoiseWasm = binaries.rnnoiseWasm.slice(0)
-    if (binaries.deepfilterWasm) {
-        deepfilterWasm = binaries.deepfilterWasm.slice(0)
-        initDeepFilterWasm(binaries.deepfilterWasm)
-    }
-}
-
-function cloneBuffer(buf?: ArrayBuffer): ArrayBuffer | undefined {
-    return buf && buf.byteLength > 0 ? buf.slice(0) : undefined
-}
-
 function getActiveModule(): ActiveDenoiseModule | undefined {
     return currentModuleId === "deepfilternet" ? deepFilterModule : rnnoiseModule
 }
 
-function initAllModules(): void {
+function initAllModules(wasmBinaries: WasmBinaries): void {
     const t0 = performance.now()
 
     if (!rnnoiseModule) {
-        rnnoiseModule = new RnnoiseModule(rnnoiseConfig, cloneBuffer(rnnoiseWasm))
+        rnnoiseModule = new RnnoiseModule(rnnoiseConfig, wasmBinaries.rnnoiseWasm)
         logInfo("PRE_INIT rnnoise", { elapsed: `${(performance.now() - t0).toFixed(2)}ms` })
     }
 
     const t1 = performance.now()
     if (!deepFilterModule) {
-        deepFilterModule = new DeepFilterModule(deepFilterState, cloneBuffer(deepfilterWasm))
-        lastDfModelBytes = cloneBytes(deepFilterState.modelBytes)
+        deepFilterModule = new DeepFilterModule(deepFilterState, wasmBinaries.deepfilterWasm)
         logInfo("PRE_INIT deepfilternet", { elapsed: `${(performance.now() - t1).toFixed(2)}ms` })
     }
 
@@ -120,15 +100,13 @@ function handleInit(msg: Extract<WorkletToWorkerMessage, { type: "INIT" }>): voi
     debugLogs = msg.debugLogs ?? false
     currentModuleId = resolveDenoiseModule(msg.moduleId)
 
-    storeWasmBinaries(msg.wasmBinaries)
-
     rnnoiseConfig = mergeRnnoiseConfig(normalizeRnnoiseConfig(), msg.moduleConfigs?.rnnoise)
     deepFilterState = mergeWorkletDeepFilterState(
         defaultWorkletDeepFilterState(),
         msg.moduleConfigs?.deepfilternet,
     )
 
-    initAllModules()
+    initAllModules(msg.wasmBinaries)
     const info = activateModule(currentModuleId)
 
     respond({
@@ -176,22 +154,8 @@ function handleSetModule(msg: Extract<WorkletToWorkerMessage, { type: "SET_MODUL
     const t0 = performance.now()
     const nextId = resolveDenoiseModule(msg.moduleId)
 
-    if (msg.config?.rnnoise) {
-        rnnoiseConfig = mergeRnnoiseConfig(rnnoiseConfig, msg.config.rnnoise)
-        rnnoiseModule?.updateConfig(rnnoiseConfig)
-    }
-    if (msg.config?.deepfilternet) {
-        deepFilterState = mergeWorkletDeepFilterState(deepFilterState, msg.config.deepfilternet)
-        if (deepFilterModule) {
-            applyDeepFilterUpdate()
-        }
-    }
-
     if (nextId === currentModuleId) {
-        logInfo("SET_MODULE (same module, config only)", {
-            moduleId: nextId,
-            elapsed: `${(performance.now() - t0).toFixed(2)}ms`,
-        })
+        logInfo("SET_MODULE (already active)", { moduleId: nextId })
         return
     }
 
@@ -225,21 +189,7 @@ function handleSetConfig(msg: Extract<WorkletToWorkerMessage, { type: "SET_CONFI
 
 function applyDeepFilterUpdate(): void {
     if (!deepFilterModule) return
-
-    const modelChanged = !sameBytes(lastDfModelBytes, deepFilterState.modelBytes)
     deepFilterModule.updateConfig(deepFilterState)
-
-    if (modelChanged) {
-        lastDfModelBytes = cloneBytes(deepFilterState.modelBytes)
-
-        if (currentModuleId === "deepfilternet") {
-            respond({
-                type: "MODULE_CHANGED",
-                frameLength: deepFilterModule.frameLength,
-                lookahead: deepFilterModule.lookahead,
-            })
-        }
-    }
 }
 
 function handleDestroy(): void {

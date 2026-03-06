@@ -15,15 +15,9 @@ export interface DeepFilterModuleConfig {
     postFilterBeta?: number
 }
 
-export interface WasmUrls {
-    rnnoise?: string
-    deepfilter?: string
-}
-
 export interface AudioPipelineOptions {
     workletUrl: string
     workerUrl?: string
-    wasmUrls?: WasmUrls
     debugLogs?: boolean
     stages?: {
         denoise?: DenoiseModuleId

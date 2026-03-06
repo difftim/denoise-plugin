@@ -27,7 +27,6 @@ export declare class AudioPipelineTrackProcessor implements TrackProcessor<Track
     setModuleConfig(moduleId: "deepfilternet", config: DeepFilterModuleConfig): Promise<void>;
     isEnabled(): Promise<boolean>;
     destroy(): Promise<void>;
-    private _buildModulePayload;
     private _applyRnnoiseConfig;
     private _applyDeepFilterConfig;
     private _initInternal;

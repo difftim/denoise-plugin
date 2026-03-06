@@ -1,4 +1,3 @@
-import { cloneBytes, sameBytes } from "../../shared/normalize"
 import { DenoiseModule } from "./DenoiseModule"
 
 export interface DeepFilterRuntimeConfig {
@@ -26,7 +25,8 @@ export function initDeepFilterWasm(wasmBinary: ArrayBuffer): void {
     if (wasmInitialized) return
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    bindings = (require("../../dist/deepfilter-bindgen.js") as { default: DeepFilterBindings }).default
+    bindings = (require("../../dist/deepfilter-bindgen.js") as { default: DeepFilterBindings })
+        .default
     bindings.initSync(wasmBinary)
     wasmInitialized = true
 }
@@ -41,10 +41,7 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
     private _disposed = false
 
     constructor(config: DeepFilterRuntimeConfig, wasmBinary?: ArrayBuffer) {
-        super({
-            ...config,
-            modelBytes: cloneBytes(config.modelBytes),
-        })
+        super(config)
 
         if (wasmBinary) {
             initDeepFilterWasm(wasmBinary)
@@ -80,21 +77,9 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
     }
 
     updateConfig(config: DeepFilterRuntimeConfig): void {
-        const next = {
-            ...config,
-            modelBytes: cloneBytes(config.modelBytes),
-        }
-
-        const modelChanged = !sameBytes(this._config.modelBytes, next.modelBytes)
-        this._config = next
-
-        if (modelChanged) {
-            this._createState(next)
-            return
-        }
-
-        this._bindings.df_set_atten_lim(this._state, next.attenLimDb)
-        this._bindings.df_set_post_filter_beta(this._state, next.postFilterBeta)
+        this._config = { ...config }
+        this._bindings.df_set_atten_lim(this._state, config.attenLimDb)
+        this._bindings.df_set_post_filter_beta(this._state, config.postFilterBeta)
     }
 
     dispose(): void {
@@ -113,13 +98,7 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
             this._state = 0
         }
 
-        const modelBytes = cloneBytes(config.modelBytes)
-
-        if (modelBytes) {
-            this._state = this._bindings.df_create(modelBytes, config.attenLimDb)
-        } else {
-            this._state = this._bindings.df_create_default(config.attenLimDb)
-        }
+        this._state = this._bindings.df_create_default(config.attenLimDb)
 
         if (!this._state) {
             throw new Error("Failed to create DeepFilterNet state")

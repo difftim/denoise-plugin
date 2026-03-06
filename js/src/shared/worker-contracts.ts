@@ -19,7 +19,6 @@ export interface WorkerProcessFrameMessage {
 export interface WorkerSetModuleMessage {
     type: "SET_MODULE"
     moduleId: DenoiseModuleId
-    config?: WorkletModuleConfigPayloadMap
 }
 
 export interface WorkerSetConfigMessage {

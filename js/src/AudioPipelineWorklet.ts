@@ -240,16 +240,12 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         }
 
         const nextId = resolveDenoiseModule(payload.moduleId)
-        this._currentModuleId = nextId
-
         this._logInfo("MODULE_SWITCH_START", { from: this._currentModuleId, to: nextId })
+        this._currentModuleId = nextId
 
         this._workerPort?.postMessage({
             type: "SET_MODULE",
             moduleId: nextId,
-            config: payload.config
-                ? { [nextId === "rnnoise" ? "rnnoise" : "deepfilternet"]: payload.config }
-                : undefined,
         } satisfies WorkletToWorkerMessage)
     }
 

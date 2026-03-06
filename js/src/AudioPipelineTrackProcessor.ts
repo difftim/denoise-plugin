@@ -20,9 +20,9 @@ import {
     mergeRnnoiseConfig,
     normalizeAudioPipelineOptions,
     resolveDenoiseModule,
+    type InternalWasmUrls,
     type ResolvedAudioPipelineOptions,
     type ResolvedDeepFilterModuleConfig,
-    type ResolvedWasmUrls,
 } from "./shared/normalize"
 import type { WorkerToWorkletMessage, WorkletToWorkerMessage } from "./shared/worker-contracts"
 
@@ -102,18 +102,12 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
             const nextModuleId = resolveDenoiseModule(moduleId)
             if (this._options.stages.denoise === nextModuleId) return
 
-            const { configPayload, transferables } = await this._buildModulePayload(nextModuleId)
-
             if (this._workletNode) {
-                await this._sendCommand(
-                    {
-                        message: "SET_STAGE_MODULE",
-                        stage: "denoise",
-                        moduleId: nextModuleId,
-                        config: configPayload,
-                    },
-                    transferables,
-                )
+                await this._sendCommand({
+                    message: "SET_STAGE_MODULE",
+                    stage: "denoise",
+                    moduleId: nextModuleId,
+                })
             }
 
             this._options.stages.denoise = nextModuleId
@@ -145,33 +139,6 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
     }
 
     // ── Module config application ──────────────────────────────────
-
-    private async _buildModulePayload(moduleId: DenoiseModuleId): Promise<{
-        configPayload: Record<string, unknown>
-        transferables?: Transferable[]
-    }> {
-        if (moduleId === "rnnoise") {
-            return {
-                configPayload: { ...this._options.moduleConfigs.rnnoise },
-            }
-        }
-
-        const deepConfig = this._options.moduleConfigs.deepfilternet
-        const modelBuffer = await this._resolveModelBuffer(deepConfig)
-
-        if (modelBuffer) {
-            this._options.moduleConfigs.deepfilternet.modelBuffer = cloneArrayBuffer(modelBuffer)
-        }
-
-        return {
-            configPayload: {
-                attenLimDb: deepConfig.attenLimDb,
-                postFilterBeta: deepConfig.postFilterBeta,
-                modelBuffer,
-            },
-            transferables: modelBuffer ? [modelBuffer] : undefined,
-        }
-    }
 
     private async _applyRnnoiseConfig(config: RnnoiseModuleConfig): Promise<void> {
         const nextConfig = mergeRnnoiseConfig(this._options.moduleConfigs.rnnoise, config)
@@ -256,16 +223,12 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
 
         const { wasmBinaries, wasmTransferables } = await this._fetchWasmBinaries(
             this._options.wasmUrls,
-            currentModule,
         )
 
-        let initModelBuffer: ArrayBuffer | undefined
-        if (currentModule === "deepfilternet") {
-            initModelBuffer = await this._resolveModelBuffer(deepConfig)
-            if (initModelBuffer) {
-                this._options.moduleConfigs.deepfilternet.modelBuffer =
-                    cloneArrayBuffer(initModelBuffer)
-            }
+        const initModelBuffer = await this._resolveModelBuffer(deepConfig)
+        if (initModelBuffer) {
+            this._options.moduleConfigs.deepfilternet.modelBuffer =
+                cloneArrayBuffer(initModelBuffer)
         }
 
         this._worker = new Worker(this._options.workerUrl)
@@ -411,10 +374,7 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
 
     // ── WASM + Model helpers ──────────────────────────────────────
 
-    private async _fetchWasmBinaries(
-        urls: ResolvedWasmUrls,
-        activeModule: DenoiseModuleId,
-    ): Promise<{
+    private async _fetchWasmBinaries(urls: InternalWasmUrls): Promise<{
         wasmBinaries: WasmBinaries
         wasmTransferables: ArrayBuffer[]
     }> {
