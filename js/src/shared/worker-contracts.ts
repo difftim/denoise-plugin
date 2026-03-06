@@ -14,7 +14,6 @@ export interface WorkerInitMessage {
 export interface WorkerProcessFrameMessage {
     type: "PROCESS_FRAME"
     inputBuffer: Float32Array
-    returnedOutputBuffers?: Float32Array[]
 }
 
 export interface WorkerSetModuleMessage {
@@ -58,7 +57,6 @@ export interface WorkerFrameResultMessage {
     type: "FRAME_RESULT"
     outputBuffer: Float32Array
     vadScore?: number
-    returnedInputBuffer?: Float32Array
 }
 
 export interface WorkerModuleChangedMessage {

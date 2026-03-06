@@ -8,7 +8,6 @@ import type {
 } from "./shared/contracts"
 import { resolveDenoiseModule } from "./shared/normalize"
 import { MonoRingBuffer } from "./worklet/MonoRingBuffer"
-import { BufferPool } from "./shared/BufferPool"
 import type { WorkerToWorkletMessage, WorkletToWorkerMessage } from "./shared/worker-contracts"
 
 const QUANTUM_SAMPLES = 128
@@ -22,7 +21,6 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     private _destroyed = false
     private _shouldProcess = true
     private _workerReady = false
-    private _switchingModule = false
 
     private _currentModuleId: DenoiseModuleId = "rnnoise"
     private _frameLength = DEFAULT_FRAME_LENGTH
@@ -32,9 +30,6 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
     private _inputQueue = new MonoRingBuffer(64 * DEFAULT_FRAME_LENGTH)
     private _outputQueue = new MonoRingBuffer(64 * DEFAULT_FRAME_LENGTH)
-    private _inputPool = new BufferPool(DEFAULT_FRAME_LENGTH)
-    private _usedOutputBuffers: Float32Array[] = []
-    private _poolLogCounter = 0
 
     private _lastVadScore: number | undefined
     private _lastVadLogAtMs = 0
@@ -50,7 +45,6 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
     process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
         if (this._destroyed) return false
-        if (this._switchingModule) return true
 
         const inputMono = inputs[0]?.[0]
         const outputMono = outputs[0]?.[0]
@@ -61,23 +55,16 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         const workerActive = this._workerReady && this._workerPort
 
         while (this._inputQueue.framesAvailable >= this._frameLength) {
-            const frame = this._inputPool.acquire()
+            const frame = new Float32Array(this._frameLength)
             this._inputQueue.pull(frame)
 
             if (workerActive) {
-                const returnedOutputBuffers = this._drainUsedOutputBuffers()
-                const transferList: ArrayBuffer[] = [frame.buffer as ArrayBuffer]
-                if (returnedOutputBuffers) {
-                    for (const buf of returnedOutputBuffers)
-                        transferList.push(buf.buffer as ArrayBuffer)
-                }
                 this._workerPort!.postMessage(
                     {
                         type: "PROCESS_FRAME",
                         inputBuffer: frame,
-                        returnedOutputBuffers,
                     } satisfies WorkletToWorkerMessage,
-                    transferList,
+                    [frame.buffer as ArrayBuffer],
                 )
             } else {
                 this._outputQueue.push(frame)
@@ -90,29 +77,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
             output[ch].set(outputMono)
         }
 
-        // this._maybeLogPoolStats()
-
         return true
-    }
-
-    private _drainUsedOutputBuffers(): Float32Array[] | undefined {
-        if (!this._usedOutputBuffers.length) return undefined
-
-        const live: Float32Array[] = []
-        for (const buf of this._usedOutputBuffers) {
-            live.push(buf)
-        }
-        this._usedOutputBuffers = []
-        return live.length > 0 ? live : undefined
-    }
-
-    private _maybeLogPoolStats(): void {
-        if (!this._debugLogs) return
-        this._poolLogCounter++
-        if (this._poolLogCounter % 500 !== 0) return
-
-        const stats = this._inputPool.stats()
-        this._logInfo("WORKLET_INPUT_POOL_STATS", stats, true)
     }
 
     // ── Main thread message handling ────────────────────────────────
@@ -197,7 +162,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
                     this._onWorkerInitOk(msg.frameLength)
                     break
                 case "FRAME_RESULT":
-                    this._onFrameResult(msg.outputBuffer, msg.vadScore, msg.returnedInputBuffer)
+                    this._onFrameResult(msg.outputBuffer, msg.vadScore)
                     break
                 case "MODULE_CHANGED":
                     this._onModuleChanged(msg.frameLength, msg.lookahead)
@@ -219,30 +184,18 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         this._logInfo("WORKER_INIT_OK", { frameLength })
     }
 
-    private _onFrameResult(
-        outputBuffer: Float32Array,
-        vadScore: number | undefined,
-        returnedInputBuffer: Float32Array | undefined,
-    ): void {
+    private _onFrameResult(outputBuffer: Float32Array, vadScore: number | undefined): void {
         this._outputQueue.push(outputBuffer)
-        this._usedOutputBuffers.push(outputBuffer)
-
-        if (returnedInputBuffer) {
-            this._inputPool.release(returnedInputBuffer)
-        }
 
         this._maybeEmitVadLog(vadScore)
     }
 
     private _onModuleChanged(frameLength: number, _lookahead: number): void {
-        const wasSwitching = this._switchingModule
-        this._switchingModule = false
-
         if (frameLength !== this._frameLength) {
             this._frameLength = frameLength
             this._rebuildForFrameLength(frameLength)
         }
-        this._logInfo("MODULE_CHANGED", { frameLength, resumed: wasSwitching })
+        this._logInfo("MODULE_CHANGED", { frameLength })
     }
 
     private _rebuildForFrameLength(frameLength: number): void {
@@ -263,8 +216,6 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
             this._outputQueue.push(new Float32Array(prefill))
             this._logInfo("PREFILL", { frameLength, prefill })
         }
-
-        this._inputPool = this._inputPool.resize(frameLength)
 
         this._logInfo("REBUILD_QUEUES", { frameLength, queueCapacity })
     }
@@ -290,7 +241,6 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
         const nextId = resolveDenoiseModule(payload.moduleId)
         this._currentModuleId = nextId
-        this._switchingModule = true
 
         this._logInfo("MODULE_SWITCH_START", { from: this._currentModuleId, to: nextId })
 

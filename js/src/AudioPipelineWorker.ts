@@ -12,7 +12,6 @@ import {
     type WorkletDeepFilterState,
 } from "./shared/normalize"
 import type { WorkerToWorkletMessage, WorkletToWorkerMessage } from "./shared/worker-contracts"
-import { BufferPool } from "./shared/BufferPool"
 import { DeepFilterModule, initDeepFilterWasm } from "./worklet/modules/DeepFilterModule"
 import { RnnoiseModule } from "./worklet/modules/RnnoiseModule"
 
@@ -33,9 +32,6 @@ let lastDfModelBytes: Uint8Array | undefined
 
 let rnnoiseModule: RnnoiseModule | undefined
 let deepFilterModule: DeepFilterModule | undefined
-
-let outputPool = new BufferPool(480)
-let poolLogCounter = 0
 
 const LOG_TAG = "[AudioPipeline:Worker]"
 
@@ -111,8 +107,6 @@ function activateModule(moduleId: DenoiseModuleId): { frameLength: number; looka
     currentModuleId = moduleId
     const active = getActiveModule()!
 
-    outputPool = outputPool.resize(active.frameLength)
-
     logInfo(`MODULE_ACTIVE:${moduleId}`, { frameLength: active.frameLength })
 
     return {
@@ -146,35 +140,14 @@ function handleInit(msg: Extract<WorkletToWorkerMessage, { type: "INIT" }>): voi
     logInfo("WORKER_READY", { elapsed: `${(performance.now() - t0).toFixed(2)}ms` })
 }
 
-function recycleReturnedOutputBuffers(buffers: Float32Array[] | undefined): void {
-    if (!buffers) return
-
-    for (const buf of buffers) {
-        outputPool.release(buf)
-    }
-}
-
-function maybeLogPoolStats(): void {
-    if (!debugLogs) return
-    poolLogCounter++
-    if (poolLogCounter % 500 !== 0) return
-    logInfo("WORKER_OUTPUT_POOL_STATS", outputPool.stats())
-}
-
 function handleProcessFrame(msg: Extract<WorkletToWorkerMessage, { type: "PROCESS_FRAME" }>): void {
-    recycleReturnedOutputBuffers(msg.returnedOutputBuffers)
-
     const input = msg.inputBuffer
     const denoiseModule = getActiveModule()
 
     if (!processingEnabled || !denoiseModule) {
-        const output = outputPool.acquire()
-        output.set(input.length <= output.length ? input : input.subarray(0, output.length))
-        respond({ type: "FRAME_RESULT", outputBuffer: output, returnedInputBuffer: input }, [
-            output.buffer,
-            input.buffer,
-        ])
-        // maybeLogPoolStats()
+        const output = new Float32Array(input.length)
+        output.set(input)
+        respond({ type: "FRAME_RESULT", outputBuffer: output }, [output.buffer as ArrayBuffer])
         return
     }
 
@@ -184,22 +157,19 @@ function handleProcessFrame(msg: Extract<WorkletToWorkerMessage, { type: "PROCES
     }
 
     try {
-        const output = outputPool.acquire()
+        const output = new Float32Array(denoiseModule.frameLength)
         const vadScore = denoiseModule.processFrame(input, output)
         respond(
             {
                 type: "FRAME_RESULT",
                 outputBuffer: output,
                 vadScore,
-                returnedInputBuffer: input,
             },
-            [output.buffer, input.buffer],
+            [output.buffer as ArrayBuffer],
         )
     } catch (error) {
         respondError(error)
     }
-
-    // maybeLogPoolStats()
 }
 
 function handleSetModule(msg: Extract<WorkletToWorkerMessage, { type: "SET_MODULE" }>): void {
@@ -262,12 +232,10 @@ function applyDeepFilterUpdate(): void {
     if (modelChanged) {
         lastDfModelBytes = cloneBytes(deepFilterState.modelBytes)
 
-        const newFrameLength = deepFilterModule.frameLength
         if (currentModuleId === "deepfilternet") {
-            outputPool = outputPool.resize(newFrameLength)
             respond({
                 type: "MODULE_CHANGED",
-                frameLength: newFrameLength,
+                frameLength: deepFilterModule.frameLength,
                 lookahead: deepFilterModule.lookahead,
             })
         }
