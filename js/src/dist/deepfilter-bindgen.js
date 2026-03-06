@@ -53,32 +53,26 @@ function addHeapObject(obj) {
     heap[idx] = obj;
     return idx;
 }
-
-let WASM_VECTOR_LEN = 0;
-
-function passArray8ToWasm0(arg, malloc) {
-    const ptr = malloc(arg.length * 1, 1) >>> 0;
-    getUint8Memory0().set(arg, ptr / 1);
-    WASM_VECTOR_LEN = arg.length;
-    return ptr;
-}
 /**
-* Create a DeepFilterNet Model
+* Get DeepFilterNet model lookahead in frames.
+* @param {number} st
+* @returns {number}
+*/
+__exports.df_get_lookahead = function(st) {
+    const ret = wasm.df_get_lookahead(st);
+    return ret >>> 0;
+};
+
+/**
+* Create a DeepFilterNet model with the built-in default model.
 *
 * Args:
-*     - path: File path to a DeepFilterNet tar.gz onnx model
 *     - atten_lim: Attenuation limit in dB.
-*
-* Returns:
-*     - DF state doing the full processing: stft, DNN noise reduction, istft.
-* @param {Uint8Array} model_bytes
 * @param {number} atten_lim
 * @returns {number}
 */
-__exports.df_create = function(model_bytes, atten_lim) {
-    const ptr0 = passArray8ToWasm0(model_bytes, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.df_create(ptr0, len0, atten_lim);
+__exports.df_create_default = function(atten_lim) {
+    const ret = wasm.df_create_default(atten_lim);
     return ret >>> 0;
 };
 
@@ -111,6 +105,8 @@ function getFloat32Memory0() {
     return cachedFloat32Memory0;
 }
 
+let WASM_VECTOR_LEN = 0;
+
 function passArrayF32ToWasm0(arg, malloc) {
     const ptr = malloc(arg.length * 4, 4) >>> 0;
     getFloat32Memory0().set(arg, ptr / 4);
@@ -138,6 +134,32 @@ __exports.df_process_frame = function(st, input) {
     return takeObject(ret);
 };
 
+function passArray8ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 1, 1) >>> 0;
+    getUint8Memory0().set(arg, ptr / 1);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+/**
+* Create a DeepFilterNet Model
+*
+* Args:
+*     - path: File path to a DeepFilterNet tar.gz onnx model
+*     - atten_lim: Attenuation limit in dB.
+*
+* Returns:
+*     - DF state doing the full processing: stft, DNN noise reduction, istft.
+* @param {Uint8Array} model_bytes
+* @param {number} atten_lim
+* @returns {number}
+*/
+__exports.df_create = function(model_bytes, atten_lim) {
+    const ptr0 = passArray8ToWasm0(model_bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.df_create(ptr0, len0, atten_lim);
+    return ret >>> 0;
+};
+
 /**
 * Set DeepFilterNet post filter beta. A beta of 0 disables the post filter.
 *
@@ -151,35 +173,12 @@ __exports.df_set_post_filter_beta = function(st, beta) {
 };
 
 /**
-* Get DeepFilterNet model lookahead in frames.
-* @param {number} st
-* @returns {number}
-*/
-__exports.df_get_lookahead = function(st) {
-    const ret = wasm.df_get_lookahead(st);
-    return ret >>> 0;
-};
-
-/**
 * Get DeepFilterNet frame size in samples.
 * @param {number} st
 * @returns {number}
 */
 __exports.df_get_frame_length = function(st) {
     const ret = wasm.df_get_frame_length(st);
-    return ret >>> 0;
-};
-
-/**
-* Create a DeepFilterNet model with the built-in default model.
-*
-* Args:
-*     - atten_lim: Attenuation limit in dB.
-* @param {number} atten_lim
-* @returns {number}
-*/
-__exports.df_create_default = function(atten_lim) {
-    const ret = wasm.df_create_default(atten_lim);
     return ret >>> 0;
 };
 

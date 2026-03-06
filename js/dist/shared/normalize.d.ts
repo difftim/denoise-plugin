@@ -24,6 +24,7 @@ export interface ResolvedAudioPipelineOptions {
     workerUrl: string;
     wasmUrls: InternalWasmUrls;
     debugLogs: boolean;
+    batchFrames: number;
     stages: {
         denoise: DenoiseModuleId;
     };

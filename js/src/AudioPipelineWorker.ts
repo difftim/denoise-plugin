@@ -1,5 +1,5 @@
 import type { DenoiseModuleId } from "./options"
-import type { WasmBinaries, WorkletModuleConfigPayloadMap } from "./shared/contracts"
+import type { WasmBinaries } from "./shared/contracts"
 import {
     defaultWorkletDeepFilterState,
     mergeRnnoiseConfig,
@@ -10,6 +10,7 @@ import {
     type WorkletDeepFilterState,
 } from "./shared/normalize"
 import type { WorkerToWorkletMessage, WorkletToWorkerMessage } from "./shared/worker-contracts"
+import { Float32ArrayPool } from "./worklet/Float32ArrayPool"
 import { DeepFilterModule } from "./worklet/modules/DeepFilterModule"
 import { RnnoiseModule } from "./worklet/modules/RnnoiseModule"
 
@@ -26,6 +27,9 @@ let deepFilterState: WorkletDeepFilterState = defaultWorkletDeepFilterState()
 
 let rnnoiseModule: RnnoiseModule | undefined
 let deepFilterModule: DeepFilterModule | undefined
+
+let framePool = new Float32ArrayPool(480)
+let pendingRecycles: Float32Array[] = []
 
 const LOG_TAG = "[AudioPipeline:Worker]"
 
@@ -86,13 +90,13 @@ function initAllModules(wasmBinaries: WasmBinaries): void {
 function activateModule(moduleId: DenoiseModuleId): { frameLength: number; lookahead: number } {
     currentModuleId = moduleId
     const active = getActiveModule()!
+    const lookahead = active instanceof DeepFilterModule ? active.lookahead : 0
 
-    logInfo(`MODULE_ACTIVE:${moduleId}`, { frameLength: active.frameLength })
+    framePool.resize(active.frameLength)
 
-    return {
-        frameLength: active.frameLength,
-        lookahead: active instanceof DeepFilterModule ? active.lookahead : 0,
-    }
+    logInfo(`MODULE_ACTIVE:${moduleId}`, { frameLength: active.frameLength, lookahead })
+
+    return { frameLength: active.frameLength, lookahead }
 }
 
 function handleInit(msg: Extract<WorkletToWorkerMessage, { type: "INIT" }>): void {
@@ -118,36 +122,69 @@ function handleInit(msg: Extract<WorkletToWorkerMessage, { type: "INIT" }>): voi
     logInfo("WORKER_READY", { elapsed: `${(performance.now() - t0).toFixed(2)}ms` })
 }
 
-function handleProcessFrame(msg: Extract<WorkletToWorkerMessage, { type: "PROCESS_FRAME" }>): void {
-    const input = msg.inputBuffer
+function handleProcessFrameBatch(
+    msg: Extract<WorkletToWorkerMessage, { type: "PROCESS_FRAME_BATCH" }>,
+): void {
+    const inputs = msg.inputBuffers
+
+    if (msg.recycleBuffers) {
+        for (let i = 0; i < msg.recycleBuffers.length; i++) {
+            framePool.release(msg.recycleBuffers[i])
+        }
+    }
+
     const denoiseModule = getActiveModule()
+    const outputBuffers: Float32Array[] = []
+    const vadScores: (number | undefined)[] = []
 
-    if (!processingEnabled || !denoiseModule) {
-        const output = new Float32Array(input.length)
-        output.set(input)
-        respond({ type: "FRAME_RESULT", outputBuffer: output }, [output.buffer as ArrayBuffer])
-        return
+    for (let i = 0; i < inputs.length; i++) {
+        const input = inputs[i]
+
+        if (!processingEnabled || !denoiseModule) {
+            const output = framePool.acquire()
+            output.set(input)
+            outputBuffers.push(output)
+            vadScores.push(undefined)
+        } else if (input.length < denoiseModule.frameLength) {
+            respondError(`Input buffer too small: ${input.length} < ${denoiseModule.frameLength}`)
+            return
+        } else {
+            try {
+                const output = framePool.acquire()
+                vadScores.push(denoiseModule.processFrame(input, output))
+                outputBuffers.push(output)
+            } catch (error) {
+                respondError(error)
+                return
+            }
+        }
+
+        pendingRecycles.push(input)
     }
 
-    if (input.length < denoiseModule.frameLength) {
-        respondError(`Input buffer too small: ${input.length} < ${denoiseModule.frameLength}`)
-        return
+    const recycles = pendingRecycles.length > 0
+        ? pendingRecycles.splice(0)
+        : undefined
+
+    const transfer: ArrayBuffer[] = []
+    for (let i = 0; i < outputBuffers.length; i++) {
+        transfer.push(outputBuffers[i].buffer as ArrayBuffer)
+    }
+    if (recycles) {
+        for (let i = 0; i < recycles.length; i++) {
+            transfer.push(recycles[i].buffer as ArrayBuffer)
+        }
     }
 
-    try {
-        const output = new Float32Array(denoiseModule.frameLength)
-        const vadScore = denoiseModule.processFrame(input, output)
-        respond(
-            {
-                type: "FRAME_RESULT",
-                outputBuffer: output,
-                vadScore,
-            },
-            [output.buffer as ArrayBuffer],
-        )
-    } catch (error) {
-        respondError(error)
-    }
+    respond(
+        {
+            type: "FRAME_RESULT_BATCH",
+            outputBuffers,
+            vadScores,
+            recycleBuffers: recycles,
+        },
+        transfer,
+    )
 }
 
 function handleSetModule(msg: Extract<WorkletToWorkerMessage, { type: "SET_MODULE" }>): void {
@@ -209,8 +246,8 @@ function handleMessage(event: MessageEvent<WorkletToWorkerMessage>): void {
             case "INIT":
                 handleInit(msg)
                 break
-            case "PROCESS_FRAME":
-                handleProcessFrame(msg)
+            case "PROCESS_FRAME_BATCH":
+                handleProcessFrameBatch(msg)
                 break
             case "SET_MODULE":
                 handleSetModule(msg)

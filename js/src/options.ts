@@ -19,6 +19,7 @@ export interface AudioPipelineOptions {
     workletUrl: string
     workerUrl?: string
     debugLogs?: boolean
+    batchFrames?: number
     stages?: {
         denoise?: DenoiseModuleId
     }

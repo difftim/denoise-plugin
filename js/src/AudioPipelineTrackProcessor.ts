@@ -266,6 +266,7 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
                 debugLogs: this._options.debugLogs,
                 workerPort: channel.port2,
                 frameLength: workerInfo.frameLength,
+                batchFrames: this._options.batchFrames,
                 stages: { denoise: currentModule },
                 moduleConfigs: {
                     rnnoise: { ...this._options.moduleConfigs.rnnoise },

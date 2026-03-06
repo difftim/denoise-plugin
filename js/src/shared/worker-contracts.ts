@@ -11,9 +11,10 @@ export interface WorkerInitMessage {
     debugLogs?: boolean
 }
 
-export interface WorkerProcessFrameMessage {
-    type: "PROCESS_FRAME"
-    inputBuffer: Float32Array
+export interface WorkerProcessFrameBatchMessage {
+    type: "PROCESS_FRAME_BATCH"
+    inputBuffers: Float32Array[]
+    recycleBuffers?: Float32Array[]
 }
 
 export interface WorkerSetModuleMessage {
@@ -38,7 +39,7 @@ export interface WorkerDestroyMessage {
 
 export type WorkletToWorkerMessage =
     | WorkerInitMessage
-    | WorkerProcessFrameMessage
+    | WorkerProcessFrameBatchMessage
     | WorkerSetModuleMessage
     | WorkerSetConfigMessage
     | WorkerSetEnabledMessage
@@ -52,10 +53,11 @@ export interface WorkerInitOkMessage {
     lookahead: number
 }
 
-export interface WorkerFrameResultMessage {
-    type: "FRAME_RESULT"
-    outputBuffer: Float32Array
-    vadScore?: number
+export interface WorkerFrameResultBatchMessage {
+    type: "FRAME_RESULT_BATCH"
+    outputBuffers: Float32Array[]
+    vadScores?: (number | undefined)[]
+    recycleBuffers?: Float32Array[]
 }
 
 export interface WorkerModuleChangedMessage {
@@ -79,7 +81,7 @@ export interface WorkerLogMessage {
 
 export type WorkerToWorkletMessage =
     | WorkerInitOkMessage
-    | WorkerFrameResultMessage
+    | WorkerFrameResultBatchMessage
     | WorkerModuleChangedMessage
     | WorkerErrorMessage
     | WorkerLogMessage

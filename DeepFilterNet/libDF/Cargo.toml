@@ -84,7 +84,7 @@ nightly-features = []
 capi = ["tract", "default-model", "dep:ndarray", "logging"]
 wasm = [
   "tract",
-  "default-model-ll",
+  "default-model",
   "dep:ndarray",
   "dep:wasm-bindgen",
   "dep:getrandom",

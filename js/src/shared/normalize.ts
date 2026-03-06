@@ -35,6 +35,7 @@ export interface ResolvedAudioPipelineOptions {
     workerUrl: string
     wasmUrls: InternalWasmUrls
     debugLogs: boolean
+    batchFrames: number
     stages: {
         denoise: DenoiseModuleId
     }
@@ -270,6 +271,7 @@ export function normalizeAudioPipelineOptions(
         workerUrl: resolveWorkerUrl(workletUrl, options.workerUrl),
         wasmUrls: resolveInternalWasmUrls(workletUrl),
         debugLogs: Boolean(options.debugLogs),
+        batchFrames: Math.max(1, Math.floor(options.batchFrames ?? 1)),
         stages: {
             denoise: resolveDenoiseModule(options.stages?.denoise),
         },

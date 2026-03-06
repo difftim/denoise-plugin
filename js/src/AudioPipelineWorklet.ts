@@ -2,32 +2,36 @@ import type { DenoiseModuleId } from "./options"
 import type {
     LogMessage,
     MainToWorkletMessage,
-    WorkletDeepFilterConfigPayload,
     WorkletRnnoiseConfigPayload,
     WorkletToMainMessage,
 } from "./shared/contracts"
 import { resolveDenoiseModule } from "./shared/normalize"
+import { Float32ArrayPool } from "./worklet/Float32ArrayPool"
 import { MonoRingBuffer } from "./worklet/MonoRingBuffer"
 import type { WorkerToWorkletMessage, WorkletToWorkerMessage } from "./shared/worker-contracts"
 
 const QUANTUM_SAMPLES = 128
 const DEFAULT_FRAME_LENGTH = 480
 const DEFAULT_VAD_LOG_INTERVAL_MS = 1000
+const DEFAULT_BATCH_FRAMES = 1
 
 class AudioPipelineWorklet extends AudioWorkletProcessor {
     private _messageChain: Promise<void> = Promise.resolve()
 
     private _debugLogs = false
     private _destroyed = false
-    private _shouldProcess = true
     private _workerReady = false
 
     private _currentModuleId: DenoiseModuleId = "rnnoise"
     private _frameLength = DEFAULT_FRAME_LENGTH
+    private _batchFrames = DEFAULT_BATCH_FRAMES
     private _prefilled = false
 
     private _workerPort?: MessagePort
 
+    private _framePool = new Float32ArrayPool(DEFAULT_FRAME_LENGTH)
+    private _pendingRecycles: Float32Array[] = []
+    private _batchQueue: Float32Array[] = []
     private _inputQueue = new MonoRingBuffer(64 * DEFAULT_FRAME_LENGTH)
     private _outputQueue = new MonoRingBuffer(64 * DEFAULT_FRAME_LENGTH)
 
@@ -50,25 +54,30 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         const outputMono = outputs[0]?.[0]
         if (!inputMono || !outputMono) return true
 
+        for (let o = 0; o < outputs.length; o++) {
+            const output = outputs[o];
+            for (let ch = 0; ch < output.length; ch++) {
+                output[ch].fill(0);
+            }
+        }
         this._inputQueue.push(inputMono)
 
         const workerActive = this._workerReady && this._workerPort
 
         while (this._inputQueue.framesAvailable >= this._frameLength) {
-            const frame = new Float32Array(this._frameLength)
+            const frame = this._framePool.acquire()
             this._inputQueue.pull(frame)
 
             if (workerActive) {
-                this._workerPort!.postMessage(
-                    {
-                        type: "PROCESS_FRAME",
-                        inputBuffer: frame,
-                    } satisfies WorkletToWorkerMessage,
-                    [frame.buffer as ArrayBuffer],
-                )
+                this._batchQueue.push(frame)
             } else {
                 this._outputQueue.push(frame)
+                this._framePool.release(frame)
             }
+        }
+
+        if (workerActive && this._batchQueue.length >= this._batchFrames) {
+            this._sendBatch()
         }
 
         this._outputQueue.pull(outputMono)
@@ -133,7 +142,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     ): void {
         this._debugLogs = payload.debugLogs ?? this._debugLogs
         this._currentModuleId = resolveDenoiseModule(payload.stages?.denoise)
-        this._shouldProcess = payload.enable ?? this._shouldProcess
+        this._batchFrames = Math.max(1, payload.batchFrames ?? DEFAULT_BATCH_FRAMES)
 
         this._vadLogIntervalMs =
             payload.moduleConfigs?.rnnoise?.bufferOverflowMs ?? DEFAULT_VAD_LOG_INTERVAL_MS
@@ -161,8 +170,8 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
                 case "INIT_OK":
                     this._onWorkerInitOk(msg.frameLength)
                     break
-                case "FRAME_RESULT":
-                    this._onFrameResult(msg.outputBuffer, msg.vadScore)
+                case "FRAME_RESULT_BATCH":
+                    this._onFrameResultBatch(msg.outputBuffers, msg.vadScores, msg.recycleBuffers)
                     break
                 case "MODULE_CHANGED":
                     this._onModuleChanged(msg.frameLength, msg.lookahead)
@@ -179,20 +188,64 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
     private _onWorkerInitOk(frameLength: number): void {
         this._frameLength = frameLength
+        this._framePool.resize(frameLength)
         this._rebuildForFrameLength(frameLength)
         this._workerReady = true
         this._logInfo("WORKER_INIT_OK", { frameLength })
     }
 
-    private _onFrameResult(outputBuffer: Float32Array, vadScore: number | undefined): void {
-        this._outputQueue.push(outputBuffer)
+    private _sendBatch(): void {
+        const inputBuffers = this._batchQueue.splice(0)
+        const recycles = this._pendingRecycles.length > 0
+            ? this._pendingRecycles.splice(0)
+            : undefined
 
-        this._maybeEmitVadLog(vadScore)
+        const transfer: ArrayBuffer[] = []
+        for (let i = 0; i < inputBuffers.length; i++) {
+            transfer.push(inputBuffers[i].buffer as ArrayBuffer)
+        }
+        if (recycles) {
+            for (let i = 0; i < recycles.length; i++) {
+                transfer.push(recycles[i].buffer as ArrayBuffer)
+            }
+        }
+
+        this._workerPort!.postMessage(
+            {
+                type: "PROCESS_FRAME_BATCH",
+                inputBuffers,
+                recycleBuffers: recycles,
+            } satisfies WorkletToWorkerMessage,
+            transfer,
+        )
+    }
+
+    private _onFrameResultBatch(
+        outputBuffers: Float32Array[],
+        vadScores: (number | undefined)[] | undefined,
+        recycleBuffers: Float32Array[] | undefined,
+    ): void {
+        for (let i = 0; i < outputBuffers.length; i++) {
+            this._outputQueue.push(outputBuffers[i])
+            this._pendingRecycles.push(outputBuffers[i])
+        }
+
+        if (recycleBuffers) {
+            for (let i = 0; i < recycleBuffers.length; i++) {
+                this._framePool.release(recycleBuffers[i])
+            }
+        }
+
+        if (vadScores) {
+            const last = vadScores[vadScores.length - 1]
+            this._maybeEmitVadLog(last)
+        }
     }
 
     private _onModuleChanged(frameLength: number, _lookahead: number): void {
         if (frameLength !== this._frameLength) {
             this._frameLength = frameLength
+            this._framePool.resize(frameLength)
             this._rebuildForFrameLength(frameLength)
         }
         this._logInfo("MODULE_CHANGED", { frameLength })
@@ -212,16 +265,17 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
         if (!this._prefilled) {
             this._prefilled = true
-            const prefill = Math.ceil((2 * frameLength) / QUANTUM_SAMPLES) * QUANTUM_SAMPLES
+            const batchCollectQuanta = Math.ceil((this._batchFrames * frameLength) / QUANTUM_SAMPLES)
+            const roundTripQuanta = Math.ceil(1.5 * this._batchFrames)
+            const prefill = (batchCollectQuanta + roundTripQuanta) * QUANTUM_SAMPLES
             this._outputQueue.push(new Float32Array(prefill))
-            this._logInfo("PREFILL", { frameLength, prefill })
+            this._logInfo("PREFILL", { frameLength, batchFrames: this._batchFrames, prefill })
         }
 
         this._logInfo("REBUILD_QUEUES", { frameLength, queueCapacity })
     }
 
     private _setEnabled(enable: boolean): void {
-        this._shouldProcess = enable
         this._lastVadLogAtMs = 0
 
         this._workerPort?.postMessage({

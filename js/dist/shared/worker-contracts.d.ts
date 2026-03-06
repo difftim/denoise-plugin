@@ -7,9 +7,10 @@ export interface WorkerInitMessage {
     moduleConfigs?: WorkletModuleConfigPayloadMap;
     debugLogs?: boolean;
 }
-export interface WorkerProcessFrameMessage {
-    type: "PROCESS_FRAME";
-    inputBuffer: Float32Array;
+export interface WorkerProcessFrameBatchMessage {
+    type: "PROCESS_FRAME_BATCH";
+    inputBuffers: Float32Array[];
+    recycleBuffers?: Float32Array[];
 }
 export interface WorkerSetModuleMessage {
     type: "SET_MODULE";
@@ -27,16 +28,17 @@ export interface WorkerSetEnabledMessage {
 export interface WorkerDestroyMessage {
     type: "DESTROY";
 }
-export type WorkletToWorkerMessage = WorkerInitMessage | WorkerProcessFrameMessage | WorkerSetModuleMessage | WorkerSetConfigMessage | WorkerSetEnabledMessage | WorkerDestroyMessage;
+export type WorkletToWorkerMessage = WorkerInitMessage | WorkerProcessFrameBatchMessage | WorkerSetModuleMessage | WorkerSetConfigMessage | WorkerSetEnabledMessage | WorkerDestroyMessage;
 export interface WorkerInitOkMessage {
     type: "INIT_OK";
     frameLength: number;
     lookahead: number;
 }
-export interface WorkerFrameResultMessage {
-    type: "FRAME_RESULT";
-    outputBuffer: Float32Array;
-    vadScore?: number;
+export interface WorkerFrameResultBatchMessage {
+    type: "FRAME_RESULT_BATCH";
+    outputBuffers: Float32Array[];
+    vadScores?: (number | undefined)[];
+    recycleBuffers?: Float32Array[];
 }
 export interface WorkerModuleChangedMessage {
     type: "MODULE_CHANGED";
@@ -54,4 +56,4 @@ export interface WorkerLogMessage {
     text: string;
     data?: unknown;
 }
-export type WorkerToWorkletMessage = WorkerInitOkMessage | WorkerFrameResultMessage | WorkerModuleChangedMessage | WorkerErrorMessage | WorkerLogMessage;
+export type WorkerToWorkletMessage = WorkerInitOkMessage | WorkerFrameResultBatchMessage | WorkerModuleChangedMessage | WorkerErrorMessage | WorkerLogMessage;

@@ -24,6 +24,7 @@ export interface InitPipelineMessage extends BaseMainToWorkletMessage {
     debugLogs?: boolean;
     workerPort?: MessagePort;
     frameLength?: number;
+    batchFrames?: number;
     stages?: {
         denoise?: DenoiseModuleId;
     };
