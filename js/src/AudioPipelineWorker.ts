@@ -148,7 +148,10 @@ function handleInit(msg: Extract<WorkletToWorkerMessage, { type: "INIT" }>): voi
 
 function recycleReturnedOutputBuffers(buffers: Float32Array[] | undefined): void {
     if (!buffers) return
-    for (const buf of buffers) outputPool.release(buf)
+
+    for (const buf of buffers) {
+        outputPool.release(buf)
+    }
 }
 
 function maybeLogPoolStats(): void {
@@ -175,39 +178,23 @@ function handleProcessFrame(msg: Extract<WorkletToWorkerMessage, { type: "PROCES
         return
     }
 
-    const frameLen = denoiseModule.frameLength
-    const numFrames = Math.floor(input.length / frameLen)
-
-    if (numFrames <= 0) {
-        respondError(`Input buffer too small: ${input.length} < ${frameLen}`)
+    if (input.length < denoiseModule.frameLength) {
+        respondError(`Input buffer too small: ${input.length} < ${denoiseModule.frameLength}`)
         return
     }
 
     try {
-        const singleIn = new Float32Array(frameLen)
-
-        for (let i = 0; i < numFrames; i++) {
-            const offset = i * frameLen
-            singleIn.set(input.subarray(offset, offset + frameLen))
-
-            const output = outputPool.acquire()
-            const vadScore = denoiseModule.processFrame(singleIn, output)
-
-            const isLastFrame = i === numFrames - 1
-            if (isLastFrame) {
-                respond(
-                    {
-                        type: "FRAME_RESULT",
-                        outputBuffer: output,
-                        vadScore,
-                        returnedInputBuffer: input,
-                    },
-                    [output.buffer, input.buffer],
-                )
-            } else {
-                respond({ type: "FRAME_RESULT", outputBuffer: output, vadScore }, [output.buffer])
-            }
-        }
+        const output = outputPool.acquire()
+        const vadScore = denoiseModule.processFrame(input, output)
+        respond(
+            {
+                type: "FRAME_RESULT",
+                outputBuffer: output,
+                vadScore,
+                returnedInputBuffer: input,
+            },
+            [output.buffer, input.buffer],
+        )
     } catch (error) {
         respondError(error)
     }

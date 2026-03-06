@@ -13,7 +13,6 @@ import type { WorkerToWorkletMessage, WorkletToWorkerMessage } from "./shared/wo
 
 const QUANTUM_SAMPLES = 128
 const DEFAULT_FRAME_LENGTH = 480
-const FRAMES_PER_TRANSFER = 1
 const DEFAULT_VAD_LOG_INTERVAL_MS = 1000
 
 class AudioPipelineWorklet extends AudioWorkletProcessor {
@@ -27,14 +26,13 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
     private _currentModuleId: DenoiseModuleId = "rnnoise"
     private _frameLength = DEFAULT_FRAME_LENGTH
-    private _transferSize = DEFAULT_FRAME_LENGTH * FRAMES_PER_TRANSFER
     private _prefilled = false
 
     private _workerPort?: MessagePort
 
     private _inputQueue = new MonoRingBuffer(64 * DEFAULT_FRAME_LENGTH)
     private _outputQueue = new MonoRingBuffer(64 * DEFAULT_FRAME_LENGTH)
-    private _inputPool = new BufferPool(DEFAULT_FRAME_LENGTH * FRAMES_PER_TRANSFER)
+    private _inputPool = new BufferPool(DEFAULT_FRAME_LENGTH)
     private _usedOutputBuffers: Float32Array[] = []
     private _poolLogCounter = 0
 
@@ -62,7 +60,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
         const workerActive = this._workerReady && this._workerPort
 
-        while (this._inputQueue.framesAvailable >= this._transferSize) {
+        while (this._inputQueue.framesAvailable >= this._frameLength) {
             const frame = this._inputPool.acquire()
             this._inputQueue.pull(frame)
 
@@ -102,9 +100,9 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
 
         const live: Float32Array[] = []
         for (const buf of this._usedOutputBuffers) {
-            if (buf.buffer.byteLength > 0) live.push(buf)
+            live.push(buf)
         }
-        this._usedOutputBuffers.length = 0
+        this._usedOutputBuffers = []
         return live.length > 0 ? live : undefined
     }
 
@@ -229,7 +227,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         this._outputQueue.push(outputBuffer)
         this._usedOutputBuffers.push(outputBuffer)
 
-        if (returnedInputBuffer && returnedInputBuffer.buffer.byteLength > 0) {
+        if (returnedInputBuffer) {
             this._inputPool.release(returnedInputBuffer)
         }
 
@@ -248,8 +246,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     }
 
     private _rebuildForFrameLength(frameLength: number): void {
-        this._transferSize = frameLength * FRAMES_PER_TRANSFER
-        const queueCapacity = 64 * Math.max(this._transferSize, QUANTUM_SAMPLES)
+        const queueCapacity = 64 * Math.max(frameLength, QUANTUM_SAMPLES)
 
         const prevInput = this._inputQueue
         const prevOutput = this._outputQueue
@@ -264,20 +261,12 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
             this._prefilled = true
             const prefill = Math.ceil((2 * frameLength) / QUANTUM_SAMPLES) * QUANTUM_SAMPLES
             this._outputQueue.push(new Float32Array(prefill))
-            this._logInfo("PREFILL", {
-                frameLength,
-                prefill,
-                framesPerTransfer: FRAMES_PER_TRANSFER,
-            })
+            this._logInfo("PREFILL", { frameLength, prefill })
         }
 
-        this._inputPool = this._inputPool.resize(this._transferSize)
+        this._inputPool = this._inputPool.resize(frameLength)
 
-        this._logInfo("REBUILD_QUEUES", {
-            frameLength,
-            transferSize: this._transferSize,
-            queueCapacity,
-        })
+        this._logInfo("REBUILD_QUEUES", { frameLength, queueCapacity })
     }
 
     private _setEnabled(enable: boolean): void {

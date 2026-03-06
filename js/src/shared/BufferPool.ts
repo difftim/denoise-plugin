@@ -24,6 +24,7 @@ export class BufferPool {
         const buf = this._pool.pop()
         if (buf) {
             this._hits++
+            buf.fill(0)
             return buf
         }
         this._misses++
