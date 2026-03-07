@@ -15,8 +15,8 @@ usage() {
     echo "  $0 --snapshot <version>   Release a SNAPSHOT version"
     echo ""
     echo "Examples:"
-    echo "  $0 1.0.7                  -> tag v1.0.7, VERSION_NAME=1.0.7"
-    echo "  $0 --snapshot 1.0.8       -> tag v1.0.8-SNAPSHOT, VERSION_NAME=1.0.8-SNAPSHOT"
+    echo "  $0 1.0.7                  -> tag 1.0.7, VERSION_NAME=1.0.7"
+    echo "  $0 --snapshot 1.0.8       -> tag 1.0.8-SNAPSHOT, VERSION_NAME=1.0.8-SNAPSHOT"
     echo ""
     echo "Release flow:"
     echo "  1. Update VERSION_NAME in kotlin/gradle.properties"
@@ -44,11 +44,11 @@ fi
 
 if [ "$SNAPSHOT" = true ]; then
     NEW_VERSION="${BASE_VERSION}-SNAPSHOT"
-    TAG="v${BASE_VERSION}-SNAPSHOT"
+    TAG="${BASE_VERSION}-SNAPSHOT"
     COMMIT_MSG="snapshot: bump version to $NEW_VERSION"
 else
     NEW_VERSION="$BASE_VERSION"
-    TAG="v${NEW_VERSION}"
+    TAG="${NEW_VERSION}"
     COMMIT_MSG="release: bump version to $NEW_VERSION"
 fi
 
