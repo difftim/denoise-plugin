@@ -252,7 +252,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     }
 
     private _rebuildForFrameLength(frameLength: number): void {
-        const queueCapacity = 64 * Math.max(frameLength, QUANTUM_SAMPLES)
+        const queueCapacity = 128 * Math.max(frameLength, QUANTUM_SAMPLES)
 
         const prevInput = this._inputQueue
         const prevOutput = this._outputQueue
@@ -266,9 +266,9 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         if (!this._prefilled) {
             this._prefilled = true
             const batchCollectQuanta = Math.ceil((this._batchFrames * frameLength) / QUANTUM_SAMPLES)
-            const roundTripQuanta = Math.ceil(1.5 * this._batchFrames)
+            const roundTripQuanta = Math.ceil(2 * this._batchFrames)
             const prefill = (batchCollectQuanta + roundTripQuanta) * QUANTUM_SAMPLES
-            this._outputQueue.push(new Float32Array(prefill))
+            this._outputQueue.push(new Float32Array(prefill).fill(0))
             this._logInfo("PREFILL", { frameLength, batchFrames: this._batchFrames, prefill })
         }
 

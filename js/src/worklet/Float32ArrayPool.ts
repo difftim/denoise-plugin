@@ -2,10 +2,10 @@ export class Float32ArrayPool {
     private _pool: Float32Array[] = []
     private _size: number
 
-    constructor(size: number, preAllocate = 32) {
+    constructor(size: number, preAllocate = 128) {
         this._size = size
         for (let i = 0; i < preAllocate; i++) {
-            this._pool.push(new Float32Array(size))
+            this._pool.push(new Float32Array(size).fill(0))
         }
     }
 
@@ -15,7 +15,7 @@ export class Float32ArrayPool {
             buf.fill(0)
             return buf
         }
-        return new Float32Array(this._size)
+        return new Float32Array(this._size).fill(0)
     }
 
     release(buf: Float32Array): void {

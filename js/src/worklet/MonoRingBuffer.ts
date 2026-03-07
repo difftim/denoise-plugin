@@ -5,7 +5,7 @@ export class MonoRingBuffer {
     private _framesAvailable = 0
 
     constructor(capacity: number) {
-        this._data = new Float32Array(capacity)
+        this._data = new Float32Array(capacity).fill(0)
     }
 
     get framesAvailable(): number {
@@ -37,6 +37,7 @@ export class MonoRingBuffer {
     pull(target: Float32Array): boolean {
         const len = target.length
         if (this._framesAvailable < len) {
+            target.fill(0)
             return false
         }
 
@@ -57,7 +58,9 @@ export class MonoRingBuffer {
 
     drainInto(dest: MonoRingBuffer): void {
         const count = this._framesAvailable
-        if (count === 0) return
+        if (count === 0) {
+            return
+        }
 
         const cap = this._data.length
         const tail = cap - this._readIndex
