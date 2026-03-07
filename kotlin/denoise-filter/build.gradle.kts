@@ -4,6 +4,19 @@ plugins {
     id("maven-publish")
 }
 
+tasks.register<Exec>("buildRnnoise") {
+    val libsDir = file("${project.rootDir}/libs")
+    onlyIf { !libsDir.exists() || libsDir.listFiles()?.isEmpty() != false }
+    workingDir = project.rootDir
+    commandLine("bash", "build_rnnoise.sh")
+}
+
+tasks.configureEach {
+    if (name.startsWith("merge") && name.endsWith("JniLibFolders")) {
+        dependsOn("buildRnnoise")
+    }
+}
+
 android {
     namespace = "org.difft.android.libraries.denoise_filter"
     compileSdk = 35
@@ -63,20 +76,12 @@ apply(from = rootProject.file("gradle/gradle-mvn-push.gradle"))
 afterEvaluate {
     publishing {
         publications {
-            // Creates a Maven publication called "release".
             create<MavenPublication>("release") {
-                // Applies the component for the release build variant.
                 from(components["release"])
 
-                // You can then customize attributes of the publication as shown below.
                 groupId = project.findProperty("GROUP") as String
                 artifactId = project.findProperty("POM_ARTIFACT_ID") as String
                 version = project.findProperty("VERSION_NAME") as String
-            }
-        }
-        repositories {
-            maven {
-                url = uri("~/workspace/project/AndroidRepo")
             }
         }
     }

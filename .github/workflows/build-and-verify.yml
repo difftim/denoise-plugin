@@ -1,0 +1,103 @@
+name: Build & Verify Android Library
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'kotlin/**'
+      - 'rnnoise/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install autotools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq autoconf automake libtool
+
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: sdkmanager --install "ndk;28.0.12674087"
+
+      - name: Build RNNoise native libraries
+        working-directory: kotlin
+        env:
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/28.0.12674087
+        run: bash build_rnnoise.sh
+
+      - name: Build library with Gradle
+        working-directory: kotlin
+        env:
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/28.0.12674087
+        run: ./gradlew :denoise-filter:assembleRelease
+
+      - name: Publish to Maven Local (verify)
+        working-directory: kotlin
+        env:
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/28.0.12674087
+        run: ./gradlew :denoise-filter:publishToMavenLocal
+
+      - name: Verify AAR artifact
+        run: |
+          AAR=$(find ~/.m2/repository -name "denoise-filter-*.aar" | head -1)
+          if [ -z "$AAR" ]; then
+            echo "ERROR: AAR artifact not found in local Maven repository"
+            exit 1
+          fi
+          echo "AAR artifact found: $AAR"
+          ls -lh "$AAR"
+
+      - name: Upload AAR artifact
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: denoise-filter-aar
+          path: ~/.m2/repository/org/difft/android/libraries/denoise-filter/**/*.aar
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download AAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: denoise-filter-aar
+          path: artifacts
+
+      - name: Detect snapshot
+        id: meta
+        run: |
+          if [[ "${{ github.ref_name }}" == *-SNAPSHOT ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          files: artifacts/**/*.aar

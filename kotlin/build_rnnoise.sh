@@ -13,7 +13,9 @@ if [ -z "$ANDROID_NDK_ROOT" ]; then
     exit 1
 fi
 
-TOOLCHAIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/darwin-x86_64
+HOST_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+HOST_ARCH=$(uname -m)
+TOOLCHAIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/${HOST_OS}-${HOST_ARCH}
 SYSROOT=$TOOLCHAIN/sysroot
 API=21  # 设定最低 API 版本
 

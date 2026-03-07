@@ -25,10 +25,10 @@ const processor = new AudioPipelineTrackProcessor({
 ## Android
 ```kotlin
 maven {
-    url = uri("https://raw.githubusercontent.com/difftim/AndroidRepo/main/")
+    url = uri("https://jitpack.io")
 }
 
-implementation("org.difft.android.libraries:denoise-filter:1.0.1")
+implementation("com.github.difftim.denoise-plugin:denoise-filter:v1.0.6")
 ```
 
 ## Swift
