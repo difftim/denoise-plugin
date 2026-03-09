@@ -24,3 +24,4 @@ node_modules
 .npmrc
 libs
 .codex
+denoise-plugin-swift

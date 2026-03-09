@@ -1,3 +1,0 @@
-[submodule "denoise-plugin-swift"]
-	path = denoise-plugin-swift
-	url = https://github.com/difftim/denoise-plugin-swift.git
