@@ -7,7 +7,7 @@
     "types": "./dist/index.d.ts",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/difftim/denoise-plugin.git"
+        "url": "git+https://github.com/TempTalkOrg/audio-pipeline-plugin.git"
     },
     "scripts": {
         "build": "npm run build:rnnoise:wasm && npm run build:deepfilter:wasm && npm run build:js",

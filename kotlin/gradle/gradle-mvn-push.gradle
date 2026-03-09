@@ -31,12 +31,12 @@ def isReleaseBuild() {
 
 def getReleaseRepositoryUrl() {
     return hasProperty('RELEASE_REPOSITORY_URL') ? RELEASE_REPOSITORY_URL
-            : "https://raw.githubusercontent.com/difftim/AndroidRepo/main/"
+            : ""
 }
 
 def getSnapshotRepositoryUrl() {
     return hasProperty('SNAPSHOT_REPOSITORY_URL') ? SNAPSHOT_REPOSITORY_URL
-            : "https://raw.githubusercontent.com/difftim/AndroidRepo/snapshots/"
+            : ""
 }
 
 def getRepositoryUsername() {

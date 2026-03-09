@@ -28,12 +28,5 @@ maven {
     url = uri("https://jitpack.io")
 }
 
-implementation("com.github.difftim.denoise-plugin:denoise-filter:1.0.6")
-```
-
-## Swift
-```swift
-dependencies: [
-    .package(url: "https://github.com/difftim/denoise-plugin.git", from: "1.0.0-swift")
-]
+implementation("com.github.TempTalkOrg:denoise-filter:1.0.6")
 ```
