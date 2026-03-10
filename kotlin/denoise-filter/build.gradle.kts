@@ -6,7 +6,7 @@ plugins {
 
 tasks.register<Exec>("buildRnnoise") {
     val libsDir = file("${project.rootDir}/libs")
-    onlyIf { !libsDir.exists() || libsDir.listFiles()?.isEmpty() != false }
+    onlyIf { System.getenv("JITPACK") == "true" || !libsDir.exists() || libsDir.listFiles()?.isEmpty() != false }
     workingDir = project.rootDir
     commandLine("bash", "build_rnnoise.sh")
 }
