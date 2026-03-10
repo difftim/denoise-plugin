@@ -3,21 +3,41 @@ jdk:
 
 before_install:
   - apt-get update -qq && apt-get install -y -qq autoconf automake libtool
-  - sdk install java 22-open
-  - sdk use java 22-open
   - |
-    curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/cmdtools.zip
-    mkdir -p $ANDROID_HOME/cmdline-tools
-    unzip -q -o /tmp/cmdtools.zip -d /tmp/cmdtools-extract
-    rm -rf $ANDROID_HOME/cmdline-tools/latest
-    mv /tmp/cmdtools-extract/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
-    rm -f /tmp/cmdtools.zip
-  - yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-  - $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;26.1.10909125"
+    echo "=== Detecting NDK ==="
+    echo "ANDROID_HOME=$ANDROID_HOME"
+    if [ -d "$ANDROID_HOME/ndk" ]; then
+      echo "NDK versions found:"
+      ls "$ANDROID_HOME/ndk/"
+      NDK_VERSION=$(ls "$ANDROID_HOME/ndk/" | sort -V | tail -1)
+    elif [ -d "$ANDROID_HOME/ndk-bundle" ]; then
+      echo "Legacy ndk-bundle found"
+      NDK_VERSION="ndk-bundle"
+    fi
+    if [ -n "$NDK_VERSION" ] && [ "$NDK_VERSION" != "ndk-bundle" ]; then
+      echo "Using NDK version: $NDK_VERSION"
+      echo "$NDK_VERSION" > /tmp/ndk_version
+    elif [ "$NDK_VERSION" = "ndk-bundle" ]; then
+      cat "$ANDROID_HOME/ndk-bundle/source.properties" 2>/dev/null || true
+      echo "ndk-bundle" > /tmp/ndk_version
+    else
+      echo "No NDK found, installing one..."
+      yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
+      $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;26.1.10909125"
+      echo "26.1.10909125" > /tmp/ndk_version
+    fi
 
 env:
   JITPACK: "true"
 
 install:
-  - export ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.1.10909125
-  - cd kotlin && ./gradlew :denoise-filter:publishToMavenLocal -xtest -xlint
+  - |
+    NDK_VERSION=$(cat /tmp/ndk_version)
+    if [ "$NDK_VERSION" = "ndk-bundle" ]; then
+      export ANDROID_NDK_ROOT=$ANDROID_HOME/ndk-bundle
+    else
+      export ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$NDK_VERSION
+    fi
+    echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
+    ls "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/" 2>/dev/null
+    cd kotlin && ./gradlew :denoise-filter:publishToMavenLocal -xtest -xlint
