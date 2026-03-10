@@ -28,5 +28,5 @@ maven {
     url = uri("https://jitpack.io")
 }
 
-implementation("com.github.TempTalkOrg:denoise-filter:1.0.9")
+implementation("com.github.TempTalkOrg:denoise-filter:1.0.10")
 ```

@@ -1,15 +1,16 @@
 #!/bin/bash
+set -e
 
-# 获取当前脚本所在目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# RNNoise 源码目录
 RNNOISE_DIR="$(cd "$SCRIPT_DIR/../rnnoise" && pwd)"
 
-# 设置 Android NDK 路径
-# ANDROID_NDK_ROOT=/Users/luke/Library/Android/sdk/ndk/28.0.13004108 # 修改为你的NDK路径
 if [ -z "$ANDROID_NDK_ROOT" ]; then
-    echo "Error: ANDROID_NDK_ROOT is not set. Please set it to your Android NDK path."
+    echo "Error: ANDROID_NDK_ROOT is not set."
+    exit 1
+fi
+
+if [ ! -d "$ANDROID_NDK_ROOT" ]; then
+    echo "Error: ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT does not exist."
     exit 1
 fi
 
@@ -22,6 +23,12 @@ else
     TOOLCHAIN=$(echo "$PREBUILT_DIR"/*/  | awk '{print $1}')
     TOOLCHAIN="${TOOLCHAIN%/}"
 fi
+
+if [ ! -d "$TOOLCHAIN" ]; then
+    echo "Error: NDK toolchain not found at $PREBUILT_DIR"
+    exit 1
+fi
+
 SYSROOT=$TOOLCHAIN/sysroot
 API=21  # 设定最低 API 版本
 
@@ -54,9 +61,11 @@ CONFIGURE_FLAGS=(
     ""
 )
 
-# 创建输出目录
 OUTPUT_DIR="$SCRIPT_DIR/libs"
-mkdir -p $OUTPUT_DIR
+mkdir -p "$OUTPUT_DIR"
+for ABI_DIR in arm64-v8a armeabi-v7a x86 x86_64; do
+    mkdir -p "$OUTPUT_DIR/$ABI_DIR"
+done
 
 # 开始编译
 for ((i=0; i<${#ARCHS[@]}; i++)); do
