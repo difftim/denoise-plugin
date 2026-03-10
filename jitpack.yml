@@ -2,6 +2,7 @@ jdk:
   - openjdk17
 
 before_install:
+  - apt-get update -qq && apt-get install -y -qq autoconf automake libtool
   - sdk install java 22-open
   - sdk use java 22-open
   - |
