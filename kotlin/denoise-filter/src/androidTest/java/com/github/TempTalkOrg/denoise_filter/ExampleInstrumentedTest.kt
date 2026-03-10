@@ -1,4 +1,4 @@
-package org.difft.android.libraries.denoise_filter
+package com.github.TempTalkOrg.denoise_filter
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -17,7 +17,7 @@ class ExampleInstrumentedTest {
     fun useAppContext() {
         // Context of the app under test.
         val appContext = InstrumentationRegistry.getInstrumentation().targetContext
-        assertEquals("org.difft.android.libraries.denoise_filter.test", appContext.packageName)
+        assertEquals("com.github.TempTalkOrg.denoise_filter.test", appContext.packageName)
 
         val denoiseo = DenoisePluginAudioProcessor.getInstance(appContext)
 

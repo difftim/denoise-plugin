@@ -1,4 +1,4 @@
-package org.difft.android.libraries.denoisefilter
+package com.github.TempTalkOrg.denoisefilter
 
 import org.junit.Test
 

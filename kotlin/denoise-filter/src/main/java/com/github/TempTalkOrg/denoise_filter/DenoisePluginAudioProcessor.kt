@@ -1,4 +1,4 @@
-package org.difft.android.libraries.denoise_filter
+package com.github.TempTalkOrg.denoise_filter
 
 import android.util.Log
 import java.nio.ByteBuffer

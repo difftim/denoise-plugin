@@ -2,10 +2,21 @@ jdk:
   - openjdk17
 
 before_install:
-  - sudo apt-get update -qq && sudo apt-get install -y -qq autoconf automake libtool
-  - yes | sdkmanager --install "ndk;28.0.12674087" > /dev/null 2>&1 || true
-  - export ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/28.0.12674087
+  - sdk install java 22-open
+  - sdk use java 22-open
+  - |
+    curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/cmdtools.zip
+    mkdir -p $ANDROID_HOME/cmdline-tools
+    unzip -q -o /tmp/cmdtools.zip -d /tmp/cmdtools-extract
+    rm -rf $ANDROID_HOME/cmdline-tools/latest
+    mv /tmp/cmdtools-extract/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
+    rm -f /tmp/cmdtools.zip
+  - yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+  - $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;25.1.8937393"
+
+env:
+  JITPACK: "true"
 
 install:
-  - export ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/28.0.12674087
-  - cd kotlin && ./gradlew :denoise-filter:publishToMavenLocal
+  - export ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/25.1.8937393
+  - cd kotlin && ./gradlew :denoise-filter:publishToMavenLocal -xtest -xlint

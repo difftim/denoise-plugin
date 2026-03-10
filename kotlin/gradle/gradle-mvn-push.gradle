@@ -20,7 +20,10 @@
  */
 
 apply plugin: 'maven-publish'
-apply plugin: 'signing'
+def isJitPack = System.getenv("JITPACK") == "true"
+if (!isJitPack) {
+    apply plugin: 'signing'
+}
 
 version = VERSION_NAME
 group = GROUP
@@ -80,16 +83,18 @@ def configurePom(pom) {
 }
 
 afterEvaluate { project ->
-    publishing {
-        repositories {
-            maven {
-                def releasesRepoUrl = getReleaseRepositoryUrl()
-                def snapshotsRepoUrl = getSnapshotRepositoryUrl()
-                url = isReleaseBuild() ? releasesRepoUrl : snapshotsRepoUrl
+    if (!isJitPack) {
+        publishing {
+            repositories {
+                maven {
+                    def releasesRepoUrl = getReleaseRepositoryUrl()
+                    def snapshotsRepoUrl = getSnapshotRepositoryUrl()
+                    url = isReleaseBuild() ? releasesRepoUrl : snapshotsRepoUrl
 
-                credentials(PasswordCredentials) {
-                    username = getRepositoryUsername()
-                    password = getRepositoryPassword()
+                    credentials(PasswordCredentials) {
+                        username = getRepositoryUsername()
+                        password = getRepositoryPassword()
+                    }
                 }
             }
         }
@@ -155,7 +160,7 @@ afterEvaluate { project ->
         configurePom(publication.pom)
     }
 
-    if (getReleaseSigningEnabled()) {
+    if (!isJitPack && getReleaseSigningEnabled()) {
         signing {
             publishing.publications.all { publication ->
                 sign publication

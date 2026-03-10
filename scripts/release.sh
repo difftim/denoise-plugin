@@ -85,7 +85,7 @@ if [[ "$confirm" =~ ^[Yy]$ ]]; then
     echo ""
     echo "Pushed to origin. CI will build and verify."
     echo "JitPack dependency:"
-    echo "  org.difft.android.libraries:denoise-filter:$TAG"
+    echo "  com.github.TempTalkOrg:denoise-filter:$TAG"
 else
     echo ""
     echo "Skipped push. Run manually when ready:"

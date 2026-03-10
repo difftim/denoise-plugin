@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "org.difft.android.libraries.denoisefilter"
+    namespace = "com.github.TempTalkOrg.denoisefilter"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "org.difft.android.libraries.denoisefilter"
+        applicationId = "com.github.TempTalkOrg.denoisefilter"
         minSdk = 24
         targetSdk = 35
         versionCode = 1

@@ -18,7 +18,7 @@ tasks.configureEach {
 }
 
 android {
-    namespace = "org.difft.android.libraries.denoise_filter"
+    namespace = "com.github.TempTalkOrg.denoise_filter"
     compileSdk = 35
 
     defaultConfig {
@@ -49,12 +49,6 @@ android {
     sourceSets {
         getByName("main") {
             jniLibs.srcDirs("${project.rootDir}/libs")
-        }
-    }
-
-    packagingOptions {
-        jniLibs {
-            useLegacyPackaging = true // 确保不对 .so 文件进行 strip
         }
     }
 }

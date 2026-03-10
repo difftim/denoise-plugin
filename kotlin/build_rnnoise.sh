@@ -15,7 +15,13 @@ fi
 
 HOST_OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 HOST_ARCH=$(uname -m)
-TOOLCHAIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/${HOST_OS}-${HOST_ARCH}
+PREBUILT_DIR="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt"
+if [ -d "$PREBUILT_DIR/${HOST_OS}-${HOST_ARCH}" ]; then
+    TOOLCHAIN="$PREBUILT_DIR/${HOST_OS}-${HOST_ARCH}"
+else
+    TOOLCHAIN=$(echo "$PREBUILT_DIR"/*/  | awk '{print $1}')
+    TOOLCHAIN="${TOOLCHAIN%/}"
+fi
 SYSROOT=$TOOLCHAIN/sysroot
 API=21  # 设定最低 API 版本
 
