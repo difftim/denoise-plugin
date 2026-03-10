@@ -2,42 +2,31 @@ jdk:
   - openjdk17
 
 before_install:
-  - sudo apt-get install -y autoconf automake libtool
   - |
-    echo "=== Detecting NDK ==="
-    echo "ANDROID_HOME=$ANDROID_HOME"
-    if [ -d "$ANDROID_HOME/ndk" ]; then
-      echo "NDK versions found:"
-      ls "$ANDROID_HOME/ndk/"
-      NDK_VERSION=$(ls "$ANDROID_HOME/ndk/" | sort -V | tail -1)
-    elif [ -d "$ANDROID_HOME/ndk-bundle" ]; then
-      echo "Legacy ndk-bundle found"
-      NDK_VERSION="ndk-bundle"
-    fi
-    if [ -n "$NDK_VERSION" ] && [ "$NDK_VERSION" != "ndk-bundle" ]; then
-      echo "Using NDK version: $NDK_VERSION"
-      echo "$NDK_VERSION" > /tmp/ndk_version
-    elif [ "$NDK_VERSION" = "ndk-bundle" ]; then
-      cat "$ANDROID_HOME/ndk-bundle/source.properties" 2>/dev/null || true
-      echo "ndk-bundle" > /tmp/ndk_version
-    else
-      echo "No NDK found, installing one..."
-      yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
-      $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;26.1.10909125"
-      echo "26.1.10909125" > /tmp/ndk_version
-    fi
+    export PREFIX=$HOME/local
+    export PATH=$PREFIX/bin:$PATH
+    mkdir -p $PREFIX
+    echo "=== Installing autotools to $PREFIX ==="
+    curl -fsSL http://ftp.gnu.org/gnu/m4/m4-1.4.19.tar.gz | tar xz
+    cd m4-1.4.19 && ./configure --prefix=$PREFIX -q && make -j$(nproc) && make install && cd ..
+    curl -fsSL http://ftp.gnu.org/gnu/autoconf/autoconf-2.71.tar.gz | tar xz
+    cd autoconf-2.71 && ./configure --prefix=$PREFIX -q && make -j$(nproc) && make install && cd ..
+    curl -fsSL http://ftp.gnu.org/gnu/automake/automake-1.16.5.tar.gz | tar xz
+    cd automake-1.16.5 && ./configure --prefix=$PREFIX -q && make -j$(nproc) && make install && cd ..
+    curl -fsSL http://ftp.gnu.org/gnu/libtool/libtool-2.4.7.tar.gz | tar xz
+    cd libtool-2.4.7 && ./configure --prefix=$PREFIX -q && make -j$(nproc) && make install && cd ..
+    echo "=== autotools installed ==="
+    autoconf --version | head -1
+    automake --version | head -1
+    libtool --version | head -1
 
 env:
   JITPACK: "true"
 
 install:
   - |
-    NDK_VERSION=$(cat /tmp/ndk_version)
-    if [ "$NDK_VERSION" = "ndk-bundle" ]; then
-      export ANDROID_NDK_ROOT=$ANDROID_HOME/ndk-bundle
-    else
-      export ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$NDK_VERSION
-    fi
+    export PATH=$HOME/local/bin:$PATH
+    export ANDROID_NDK_ROOT=$ANDROID_HOME/ndk-bundle
     echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
-    ls "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/" 2>/dev/null
+    cat "$ANDROID_NDK_ROOT/source.properties"
     cd kotlin && ./gradlew :denoise-filter:publishToMavenLocal -xtest -xlint
