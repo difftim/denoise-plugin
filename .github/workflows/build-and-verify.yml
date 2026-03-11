@@ -59,7 +59,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: denoise-filter-aar
-          path: ~/.m2/repository/com/github/TempTalkOrg/denoise-filter/**/*.aar
+          path: ~/.m2/repository/org/difft/android/libraries/denoise-filter/**/*.aar
 
   release:
     needs: build

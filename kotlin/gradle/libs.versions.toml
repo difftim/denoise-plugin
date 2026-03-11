@@ -16,7 +16,7 @@ androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "j
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
-livekit-android = { module = "com.github.TempTalkOrg.livekit-client-sdk-android:livekit-android", version.ref = "livekitAndroid" }
+livekit-android = { module = "org.difft.android.libraries:livekit-android", version.ref = "livekitAndroid" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
