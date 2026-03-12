@@ -1,15 +1,24 @@
 import { DenoiseModule } from "./DenoiseModule"
 
 export interface DeepFilterRuntimeConfig {
-    modelBytes?: Uint8Array
     attenLimDb: number
     postFilterBeta: number
+    /** Minimum dB threshold (default -15). Below this, treat as noise only. */
+    minDbThresh?: number
+    /** Max dB threshold for ERB stage (default 35). Above this, skip processing. */
+    maxDbErbThresh?: number
+    /** Max dB threshold for DF stage (default 35). Above this, skip DF stage. */
+    maxDbDfThresh?: number
 }
 
 interface DeepFilterBindings {
     initSync: (module: BufferSource | WebAssembly.Module) => unknown
-    df_create: (modelBytes: Uint8Array, attenLimDb: number) => number
-    df_create_default: (attenLimDb: number) => number
+    df_create_default: (
+        attenLimDb: number,
+        minDbThresh?: number,
+        maxDbErbThresh?: number,
+        maxDbDfThresh?: number,
+    ) => number
     df_destroy: (state: number) => void
     df_get_frame_length: (state: number) => number
     df_get_lookahead: (state: number) => number
@@ -98,7 +107,12 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
             this._state = 0
         }
 
-        this._state = this._bindings.df_create_default(config.attenLimDb)
+        this._state = this._bindings.df_create_default(
+            config.attenLimDb,
+            config.minDbThresh ?? -15,
+            config.maxDbErbThresh ?? 35,
+            config.maxDbDfThresh ?? 35,
+        )
 
         if (!this._state) {
             throw new Error("Failed to create DeepFilterNet state")

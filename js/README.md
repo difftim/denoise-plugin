@@ -31,7 +31,6 @@ const processor = new AudioPipelineTrackProcessor({
             bufferOverflowMs: 1000,
         },
         deepfilternet: {
-            modelUrl: "/assets/DeepFilterNet3_onnx.tar.gz",
             attenLimDb: 100,
             postFilterBeta: 0,
         },
@@ -47,10 +46,10 @@ await processor.setStageModule("denoise", "rnnoise")
 ## Runtime Behavior
 
 - Single `AudioWorklet` runtime.
-- `setStageModule("denoise", ...)` switches denoise module in-place without restart.
-- `setModuleConfig("deepfilternet", ...)` supports dynamic model + param update.
-  - If both `modelBuffer` and `modelUrl` are passed, `modelBuffer` is used.
-  - `modelUrl` is fetched on the main thread and transferred to worklet.
+- **WASM and models are loaded only at init.** Both `rnnoise` and `deepfilternet` WASM binaries are fetched and both modules are created during `init()`. No model or WASM is loaded when switching modules or when calling `setModuleConfig` later.
+- `setStageModule("denoise", ...)` switches the active denoise module in-place (rnnoise ↔ deepfilternet). Only the already-loaded active module is used; no extra loading.
+- `setModuleConfig("deepfilternet", ...)` after init only updates parameters (`attenLimDb`, `postFilterBeta`). DeepFilter uses the **built-in model only** (no custom model loading).
+- `setModuleConfig("rnnoise", ...)` updates rnnoise-only config.
 - `vadLogs` and `bufferOverflowMs` are `rnnoise`-only configs.
   - They are ignored by `deepfilternet`.
   - Updating rnnoise config while deepfilter is active is cached and applied when switching back to rnnoise.

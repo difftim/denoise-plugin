@@ -1,6 +1,5 @@
 import type {
     DenoiseModuleId,
-    DeepFilterModuleConfig,
     PipelineStage,
     RnnoiseModuleConfig,
 } from "../options"
@@ -10,11 +9,15 @@ export const REQUIRED_SAMPLE_RATE = 48000
 
 export interface WorkletRnnoiseConfigPayload extends RnnoiseModuleConfig { }
 
-export interface WorkletDeepFilterConfigPayload extends Omit<
-    DeepFilterModuleConfig,
-    "modelBuffer"
-> {
-    modelBuffer?: ArrayBuffer
+export interface WorkletDeepFilterConfigPayload {
+    attenLimDb?: number
+    postFilterBeta?: number
+    /** Used at init only (default -15). */
+    minDbThresh?: number
+    /** Used at init only (default 35). */
+    maxDbErbThresh?: number
+    /** Used at init only (default 35). */
+    maxDbDfThresh?: number
 }
 
 export type WorkletModuleConfigPayload =

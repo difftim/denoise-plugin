@@ -63,16 +63,25 @@ __exports.df_get_lookahead = function(st) {
     return ret >>> 0;
 };
 
+function isLikeNone(x) {
+    return x === undefined || x === null;
+}
 /**
 * Create a DeepFilterNet model with the built-in default model.
 *
 * Args:
 *     - atten_lim: Attenuation limit in dB.
+*     - min_db_thresh: Minimum dB threshold (default: -15.). Below this, treat as noise only.
+*     - max_db_erb_thresh: Maximum dB threshold for ERB stage (default: 35.). Above this, skip processing.
+*     - max_db_df_thresh: Maximum dB threshold for DF stage (default: 35.). Above this, skip DF stage.
 * @param {number} atten_lim
+* @param {number | undefined} [min_db_thresh]
+* @param {number | undefined} [max_db_erb_thresh]
+* @param {number | undefined} [max_db_df_thresh]
 * @returns {number}
 */
-__exports.df_create_default = function(atten_lim) {
-    const ret = wasm.df_create_default(atten_lim);
+__exports.df_create_default = function(atten_lim, min_db_thresh, max_db_erb_thresh, max_db_df_thresh) {
+    const ret = wasm.df_create_default(atten_lim, !isLikeNone(min_db_thresh), isLikeNone(min_db_thresh) ? 0 : min_db_thresh, !isLikeNone(max_db_erb_thresh), isLikeNone(max_db_erb_thresh) ? 0 : max_db_erb_thresh, !isLikeNone(max_db_df_thresh), isLikeNone(max_db_df_thresh) ? 0 : max_db_df_thresh);
     return ret >>> 0;
 };
 

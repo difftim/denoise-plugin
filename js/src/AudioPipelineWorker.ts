@@ -28,6 +28,8 @@ let deepFilterState: WorkletDeepFilterState = defaultWorkletDeepFilterState()
 let rnnoiseModule: RnnoiseModule | undefined
 let deepFilterModule: DeepFilterModule | undefined
 
+let wasmBinaries: WasmBinaries | undefined
+
 let framePool = new Float32ArrayPool(480)
 let pendingRecycles: Float32Array[] = []
 
@@ -103,6 +105,7 @@ function handleInit(msg: Extract<WorkletToWorkerMessage, { type: "INIT" }>): voi
     const t0 = performance.now()
     debugLogs = msg.debugLogs ?? false
     currentModuleId = resolveDenoiseModule(msg.moduleId)
+    wasmBinaries = msg.wasmBinaries
 
     rnnoiseConfig = mergeRnnoiseConfig(normalizeRnnoiseConfig(), msg.moduleConfigs?.rnnoise)
     deepFilterState = mergeWorkletDeepFilterState(
@@ -162,9 +165,7 @@ function handleProcessFrameBatch(
         pendingRecycles.push(input)
     }
 
-    const recycles = pendingRecycles.length > 0
-        ? pendingRecycles.splice(0)
-        : undefined
+    const recycles = pendingRecycles.length > 0 ? pendingRecycles.splice(0) : undefined
 
     const transfer: ArrayBuffer[] = []
     for (let i = 0; i < outputBuffers.length; i++) {
@@ -234,6 +235,7 @@ function handleDestroy(): void {
     deepFilterModule?.dispose()
     rnnoiseModule = undefined
     deepFilterModule = undefined
+    wasmBinaries = undefined
     logInfo("WORKER_DESTROYED")
 }
 

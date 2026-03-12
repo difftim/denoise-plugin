@@ -15,14 +15,12 @@ import type {
 } from "./shared/contracts"
 import { COMMAND_TIMEOUT_MS } from "./shared/contracts"
 import {
-    cloneArrayBuffer,
     mergeDeepFilterConfig,
     mergeRnnoiseConfig,
     normalizeAudioPipelineOptions,
     resolveDenoiseModule,
     type InternalWasmUrls,
     type ResolvedAudioPipelineOptions,
-    type ResolvedDeepFilterModuleConfig,
 } from "./shared/normalize"
 import type { WorkerToWorkletMessage, WorkletToWorkerMessage } from "./shared/worker-contracts"
 
@@ -157,40 +155,16 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
     private async _applyDeepFilterConfig(config: DeepFilterModuleConfig): Promise<void> {
         const nextConfig = mergeDeepFilterConfig(this._options.moduleConfigs.deepfilternet, config)
 
-        let modelBuffer: ArrayBuffer | undefined
-        let clearModel = false
-
-        if (config.modelBuffer !== undefined) {
-            if (config.modelBuffer.byteLength <= 0) {
-                throw new Error("DeepFilter modelBuffer is empty")
-            }
-            modelBuffer = cloneArrayBuffer(config.modelBuffer)
-            nextConfig.modelBuffer = cloneArrayBuffer(modelBuffer)
-        } else if (config.modelUrl !== undefined) {
-            if (nextConfig.modelUrl) {
-                modelBuffer = await this._fetchBinary(nextConfig.modelUrl, "DeepFilter model")
-                nextConfig.modelBuffer = cloneArrayBuffer(modelBuffer)
-            } else {
-                clearModel = true
-                nextConfig.modelBuffer = undefined
-            }
-        } else if (config.clearModel === true) {
-            clearModel = true
-            nextConfig.modelBuffer = undefined
-        }
-
         if (this._workletNode) {
             const payload: WorkletDeepFilterConfigPayload = {
                 attenLimDb: nextConfig.attenLimDb,
                 postFilterBeta: nextConfig.postFilterBeta,
-                modelBuffer,
-                clearModel,
             }
-
-            await this._sendCommand(
-                { message: "SET_MODULE_CONFIG", moduleId: "deepfilternet", config: payload },
-                modelBuffer ? [modelBuffer] : undefined,
-            )
+            await this._sendCommand({
+                message: "SET_MODULE_CONFIG",
+                moduleId: "deepfilternet",
+                config: payload,
+            })
         }
 
         this._options.moduleConfigs.deepfilternet = nextConfig
@@ -225,12 +199,6 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
             this._options.wasmUrls,
         )
 
-        const initModelBuffer = await this._resolveModelBuffer(deepConfig)
-        if (initModelBuffer) {
-            this._options.moduleConfigs.deepfilternet.modelBuffer =
-                cloneArrayBuffer(initModelBuffer)
-        }
-
         this._worker = new Worker(this._options.workerUrl)
 
         const channel = new MessageChannel()
@@ -246,15 +214,15 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
                 deepfilternet: {
                     attenLimDb: deepConfig.attenLimDb,
                     postFilterBeta: deepConfig.postFilterBeta,
-                    modelBuffer: initModelBuffer,
+                    minDbThresh: deepConfig.minDbThresh,
+                    maxDbErbThresh: deepConfig.maxDbErbThresh,
+                    maxDbDfThresh: deepConfig.maxDbDfThresh,
                 },
             },
             debugLogs: this._options.debugLogs,
         }
 
-        const initTransferables: Transferable[] = [...wasmTransferables]
-        if (initModelBuffer) initTransferables.push(initModelBuffer)
-        channel.port2.postMessage(workerInitMsg, initTransferables)
+        channel.port2.postMessage(workerInitMsg, wasmTransferables)
 
         const workerInfo = await this._waitForWorkerInit(channel.port2)
         this._debug("worker init complete", workerInfo)
@@ -273,6 +241,9 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
                     deepfilternet: {
                         attenLimDb: deepConfig.attenLimDb,
                         postFilterBeta: deepConfig.postFilterBeta,
+                        minDbThresh: deepConfig.minDbThresh,
+                        maxDbErbThresh: deepConfig.maxDbErbThresh,
+                        maxDbDfThresh: deepConfig.maxDbDfThresh,
                     },
                 },
             },
@@ -393,14 +364,6 @@ export class AudioPipelineTrackProcessor implements TrackProcessor<
         wasmTransferables.push(deepfilterWasm)
 
         return { wasmBinaries, wasmTransferables }
-    }
-
-    private async _resolveModelBuffer(
-        config: ResolvedDeepFilterModuleConfig,
-    ): Promise<ArrayBuffer | undefined> {
-        if (config.modelBuffer) return cloneArrayBuffer(config.modelBuffer)
-        if (!config.modelUrl) return undefined
-        return this._fetchBinary(config.modelUrl, "DeepFilter model")
     }
 
     private async _fetchBinary(url: string, label: string): Promise<ArrayBuffer> {

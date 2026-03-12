@@ -44,9 +44,22 @@ pub unsafe fn df_create(
 ///
 /// Args:
 ///     - atten_lim: Attenuation limit in dB.
+///     - min_db_thresh: Minimum dB threshold (default: -15.). Below this, treat as noise only.
+///     - max_db_erb_thresh: Maximum dB threshold for ERB stage (default: 35.). Above this, skip processing.
+///     - max_db_df_thresh: Maximum dB threshold for DF stage (default: 35.). Above this, skip DF stage.
 #[wasm_bindgen]
-pub unsafe fn df_create_default(atten_lim: f32) -> *mut DFState {
-    let r_params = RuntimeParams::default_with_ch(1).with_atten_lim(atten_lim);
+pub unsafe fn df_create_default(
+    atten_lim: f32,
+    min_db_thresh: Option<f32>,
+    max_db_erb_thresh: Option<f32>,
+    max_db_df_thresh: Option<f32>,
+) -> *mut DFState {
+    let min_db = min_db_thresh.unwrap_or(-15.);
+    let max_erb = max_db_erb_thresh.unwrap_or(35.);
+    let max_df = max_db_df_thresh.unwrap_or(35.);
+    let r_params = RuntimeParams::default_with_ch(1)
+        .with_atten_lim(atten_lim)
+        .with_thresholds(min_db, max_erb, max_df);
     let df_params = DfParams::default();
     let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
     Box::into_raw(Box::new(DFState(m)))

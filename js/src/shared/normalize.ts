@@ -9,6 +9,9 @@ export const DEFAULT_DENOISE_MODULE: DenoiseModuleId = "rnnoise"
 export const DEFAULT_RNNOISE_VAD_LOG_INTERVAL_MS = 1000
 export const DEFAULT_DF_ATTEN_LIM_DB = 100
 export const DEFAULT_DF_POST_FILTER_BETA = 0
+export const DEFAULT_DF_MIN_DB_THRESH = -15
+export const DEFAULT_DF_MAX_DB_ERB_THRESH = 35
+export const DEFAULT_DF_MAX_DB_DF_THRESH = 35
 
 export interface ResolvedRnnoiseModuleConfig {
     vadLogs: boolean
@@ -16,10 +19,11 @@ export interface ResolvedRnnoiseModuleConfig {
 }
 
 export interface ResolvedDeepFilterModuleConfig {
-    modelUrl?: string
-    modelBuffer?: ArrayBuffer
     attenLimDb: number
     postFilterBeta: number
+    minDbThresh: number
+    maxDbErbThresh: number
+    maxDbDfThresh: number
 }
 
 export const DEFAULT_RNNOISE_WASM_FILENAME = "rnnoise.wasm"
@@ -43,27 +47,6 @@ export interface ResolvedAudioPipelineOptions {
         rnnoise: ResolvedRnnoiseModuleConfig
         deepfilternet: ResolvedDeepFilterModuleConfig
     }
-}
-
-export function cloneArrayBuffer(buffer: ArrayBuffer): ArrayBuffer {
-    return buffer.slice(0)
-}
-
-export function cloneBytes(bytes?: Uint8Array): Uint8Array | undefined {
-    return bytes ? bytes.slice(0) : undefined
-}
-
-export function normalizeModelUrl(value?: string): string | undefined {
-    if (typeof value !== "string") {
-        return undefined
-    }
-
-    const trimmed = value.trim()
-    if (trimmed.length === 0) {
-        return undefined
-    }
-
-    return trimmed
 }
 
 export function resolveDenoiseModule(moduleId?: DenoiseModuleId): DenoiseModuleId {
@@ -92,6 +75,10 @@ export function resolveDeepFilterPostFilterBeta(value?: number): number {
         return DEFAULT_DF_POST_FILTER_BETA
     }
     return Math.max(0, value ?? DEFAULT_DF_POST_FILTER_BETA)
+}
+
+function resolveDeepFilterThreshold(value: number | undefined, defaultVal: number): number {
+    return Number.isFinite(value) ? value! : defaultVal
 }
 
 export function normalizeRnnoiseConfig(config?: RnnoiseModuleConfig): ResolvedRnnoiseModuleConfig {
@@ -124,11 +111,14 @@ export function normalizeDeepFilterConfig(
     config?: DeepFilterModuleConfig,
 ): ResolvedDeepFilterModuleConfig {
     return {
-        modelUrl: normalizeModelUrl(config?.modelUrl),
-        modelBuffer:
-            config?.modelBuffer !== undefined ? cloneArrayBuffer(config.modelBuffer) : undefined,
         attenLimDb: resolveDeepFilterAttenLimDb(config?.attenLimDb),
         postFilterBeta: resolveDeepFilterPostFilterBeta(config?.postFilterBeta),
+        minDbThresh: resolveDeepFilterThreshold(config?.minDbThresh, DEFAULT_DF_MIN_DB_THRESH),
+        maxDbErbThresh: resolveDeepFilterThreshold(
+            config?.maxDbErbThresh,
+            DEFAULT_DF_MAX_DB_ERB_THRESH,
+        ),
+        maxDbDfThresh: resolveDeepFilterThreshold(config?.maxDbDfThresh, DEFAULT_DF_MAX_DB_DF_THRESH),
     }
 }
 
@@ -136,33 +126,8 @@ export function mergeDeepFilterConfig(
     base: ResolvedDeepFilterModuleConfig,
     patch?: DeepFilterModuleConfig,
 ): ResolvedDeepFilterModuleConfig {
-    if (!patch) {
-        return {
-            ...base,
-            modelBuffer: base.modelBuffer ? cloneArrayBuffer(base.modelBuffer) : undefined,
-        }
-    }
-
-    let modelUrl = base.modelUrl
-    let modelBuffer = base.modelBuffer ? cloneArrayBuffer(base.modelBuffer) : undefined
-
-    if (patch.clearModel === true) {
-        modelUrl = undefined
-        modelBuffer = undefined
-    }
-
-    if (patch.modelUrl !== undefined) {
-        modelUrl = normalizeModelUrl(patch.modelUrl)
-        modelBuffer = undefined
-    }
-
-    if (patch.modelBuffer !== undefined) {
-        modelBuffer = cloneArrayBuffer(patch.modelBuffer)
-    }
-
+    if (!patch) return { ...base }
     return {
-        modelUrl,
-        modelBuffer,
         attenLimDb:
             patch.attenLimDb !== undefined
                 ? resolveDeepFilterAttenLimDb(patch.attenLimDb)
@@ -171,58 +136,42 @@ export function mergeDeepFilterConfig(
             patch.postFilterBeta !== undefined
                 ? resolveDeepFilterPostFilterBeta(patch.postFilterBeta)
                 : base.postFilterBeta,
+        minDbThresh: resolveDeepFilterThreshold(patch.minDbThresh, base.minDbThresh),
+        maxDbErbThresh: resolveDeepFilterThreshold(patch.maxDbErbThresh, base.maxDbErbThresh),
+        maxDbDfThresh: resolveDeepFilterThreshold(patch.maxDbDfThresh, base.maxDbDfThresh),
     }
 }
 
 export interface WorkletDeepFilterState {
-    modelUrl?: string
-    modelBytes?: Uint8Array
     attenLimDb: number
     postFilterBeta: number
+    minDbThresh: number
+    maxDbErbThresh: number
+    maxDbDfThresh: number
 }
 
 export function defaultWorkletDeepFilterState(): WorkletDeepFilterState {
     return {
-        modelUrl: undefined,
-        modelBytes: undefined,
         attenLimDb: DEFAULT_DF_ATTEN_LIM_DB,
         postFilterBeta: DEFAULT_DF_POST_FILTER_BETA,
+        minDbThresh: DEFAULT_DF_MIN_DB_THRESH,
+        maxDbErbThresh: DEFAULT_DF_MAX_DB_ERB_THRESH,
+        maxDbDfThresh: DEFAULT_DF_MAX_DB_DF_THRESH,
     }
 }
 
 export function mergeWorkletDeepFilterState(
     base: WorkletDeepFilterState,
     patch?: {
-        modelUrl?: string
-        modelBuffer?: ArrayBuffer
-        clearModel?: boolean
         attenLimDb?: number
         postFilterBeta?: number
+        minDbThresh?: number
+        maxDbErbThresh?: number
+        maxDbDfThresh?: number
     },
 ): WorkletDeepFilterState {
-    if (!patch) return { ...base, modelBytes: cloneBytes(base.modelBytes) }
-
-    let modelUrl = normalizeModelUrl(base.modelUrl)
-    let modelBytes = cloneBytes(base.modelBytes)
-
-    if (patch.clearModel === true) {
-        modelUrl = undefined
-        modelBytes = undefined
-    }
-    if (patch.modelUrl !== undefined) {
-        modelUrl = normalizeModelUrl(patch.modelUrl)
-        modelBytes = undefined
-    }
-    if (patch.modelBuffer !== undefined) {
-        if (patch.modelBuffer.byteLength <= 0) {
-            throw new Error("DeepFilter modelBuffer is empty")
-        }
-        modelBytes = new Uint8Array(patch.modelBuffer.slice(0))
-    }
-
+    if (!patch) return { ...base }
     return {
-        modelUrl,
-        modelBytes,
         attenLimDb:
             patch.attenLimDb !== undefined
                 ? resolveDeepFilterAttenLimDb(patch.attenLimDb)
@@ -231,6 +180,9 @@ export function mergeWorkletDeepFilterState(
             patch.postFilterBeta !== undefined
                 ? resolveDeepFilterPostFilterBeta(patch.postFilterBeta)
                 : base.postFilterBeta,
+        minDbThresh: resolveDeepFilterThreshold(patch.minDbThresh, base.minDbThresh),
+        maxDbErbThresh: resolveDeepFilterThreshold(patch.maxDbErbThresh, base.maxDbErbThresh),
+        maxDbDfThresh: resolveDeepFilterThreshold(patch.maxDbDfThresh, base.maxDbDfThresh),
     }
 }
 
