@@ -1,6 +1,6 @@
 import type { ResolvedRnnoiseModuleConfig } from "../../shared/normalize";
-import { DenoiseModule } from "./DenoiseModule";
-export declare class RnnoiseModule extends DenoiseModule<ResolvedRnnoiseModuleConfig> {
+import { AudioProcessingModule } from "./AudioProcessingModule";
+export declare class RnnoiseModule extends AudioProcessingModule<ResolvedRnnoiseModuleConfig> {
     readonly moduleId = "rnnoise";
     readonly frameLength = 480;
     private readonly _module;

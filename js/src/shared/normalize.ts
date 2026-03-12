@@ -15,10 +15,10 @@ export const DEFAULT_DF_MAX_DB_DF_THRESH = 35
 
 export interface ResolvedRnnoiseModuleConfig {
     vadLogs: boolean
-    bufferOverflowMs: number
+    vadLogIntervalMs: number
 }
 
-export interface ResolvedDeepFilterModuleConfig {
+export interface ResolvedDeepFilterConfig {
     attenLimDb: number
     postFilterBeta: number
     minDbThresh: number
@@ -45,7 +45,7 @@ export interface ResolvedAudioPipelineOptions {
     }
     moduleConfigs: {
         rnnoise: ResolvedRnnoiseModuleConfig
-        deepfilternet: ResolvedDeepFilterModuleConfig
+        deepfilternet: ResolvedDeepFilterConfig
     }
 }
 
@@ -84,7 +84,7 @@ function resolveDeepFilterThreshold(value: number | undefined, defaultVal: numbe
 export function normalizeRnnoiseConfig(config?: RnnoiseModuleConfig): ResolvedRnnoiseModuleConfig {
     return {
         vadLogs: Boolean(config?.vadLogs),
-        bufferOverflowMs: resolveVadLogIntervalMs(config?.bufferOverflowMs),
+        vadLogIntervalMs: resolveVadLogIntervalMs(config?.vadLogIntervalMs),
     }
 }
 
@@ -100,16 +100,16 @@ export function mergeRnnoiseConfig(
 
     return {
         vadLogs: patch.vadLogs ?? base.vadLogs,
-        bufferOverflowMs:
-            patch.bufferOverflowMs !== undefined
-                ? resolveVadLogIntervalMs(patch.bufferOverflowMs)
-                : base.bufferOverflowMs,
+        vadLogIntervalMs:
+            patch.vadLogIntervalMs !== undefined
+                ? resolveVadLogIntervalMs(patch.vadLogIntervalMs)
+                : base.vadLogIntervalMs,
     }
 }
 
 export function normalizeDeepFilterConfig(
     config?: DeepFilterModuleConfig,
-): ResolvedDeepFilterModuleConfig {
+): ResolvedDeepFilterConfig {
     return {
         attenLimDb: resolveDeepFilterAttenLimDb(config?.attenLimDb),
         postFilterBeta: resolveDeepFilterPostFilterBeta(config?.postFilterBeta),
@@ -123,53 +123,9 @@ export function normalizeDeepFilterConfig(
 }
 
 export function mergeDeepFilterConfig(
-    base: ResolvedDeepFilterModuleConfig,
+    base: ResolvedDeepFilterConfig,
     patch?: DeepFilterModuleConfig,
-): ResolvedDeepFilterModuleConfig {
-    if (!patch) return { ...base }
-    return {
-        attenLimDb:
-            patch.attenLimDb !== undefined
-                ? resolveDeepFilterAttenLimDb(patch.attenLimDb)
-                : base.attenLimDb,
-        postFilterBeta:
-            patch.postFilterBeta !== undefined
-                ? resolveDeepFilterPostFilterBeta(patch.postFilterBeta)
-                : base.postFilterBeta,
-        minDbThresh: resolveDeepFilterThreshold(patch.minDbThresh, base.minDbThresh),
-        maxDbErbThresh: resolveDeepFilterThreshold(patch.maxDbErbThresh, base.maxDbErbThresh),
-        maxDbDfThresh: resolveDeepFilterThreshold(patch.maxDbDfThresh, base.maxDbDfThresh),
-    }
-}
-
-export interface WorkletDeepFilterState {
-    attenLimDb: number
-    postFilterBeta: number
-    minDbThresh: number
-    maxDbErbThresh: number
-    maxDbDfThresh: number
-}
-
-export function defaultWorkletDeepFilterState(): WorkletDeepFilterState {
-    return {
-        attenLimDb: DEFAULT_DF_ATTEN_LIM_DB,
-        postFilterBeta: DEFAULT_DF_POST_FILTER_BETA,
-        minDbThresh: DEFAULT_DF_MIN_DB_THRESH,
-        maxDbErbThresh: DEFAULT_DF_MAX_DB_ERB_THRESH,
-        maxDbDfThresh: DEFAULT_DF_MAX_DB_DF_THRESH,
-    }
-}
-
-export function mergeWorkletDeepFilterState(
-    base: WorkletDeepFilterState,
-    patch?: {
-        attenLimDb?: number
-        postFilterBeta?: number
-        minDbThresh?: number
-        maxDbErbThresh?: number
-        maxDbDfThresh?: number
-    },
-): WorkletDeepFilterState {
+): ResolvedDeepFilterConfig {
     if (!patch) return { ...base }
     return {
         attenLimDb:

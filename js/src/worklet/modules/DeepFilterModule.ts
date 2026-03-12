@@ -1,15 +1,10 @@
-import { DenoiseModule } from "./DenoiseModule"
-
-export interface DeepFilterRuntimeConfig {
-    attenLimDb: number
-    postFilterBeta: number
-    /** Minimum dB threshold (default -15). Below this, treat as noise only. */
-    minDbThresh?: number
-    /** Max dB threshold for ERB stage (default 35). Above this, skip processing. */
-    maxDbErbThresh?: number
-    /** Max dB threshold for DF stage (default 35). Above this, skip DF stage. */
-    maxDbDfThresh?: number
-}
+import {
+    DEFAULT_DF_MAX_DB_DF_THRESH,
+    DEFAULT_DF_MAX_DB_ERB_THRESH,
+    DEFAULT_DF_MIN_DB_THRESH,
+    type ResolvedDeepFilterConfig,
+} from "../../shared/normalize"
+import { AudioProcessingModule } from "./AudioProcessingModule"
 
 interface DeepFilterBindings {
     initSync: (module: BufferSource | WebAssembly.Module) => unknown
@@ -40,7 +35,7 @@ export function initDeepFilterWasm(wasmBinary: ArrayBuffer): void {
     wasmInitialized = true
 }
 
-export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
+export class DeepFilterModule extends AudioProcessingModule<ResolvedDeepFilterConfig> {
     readonly moduleId = "deepfilternet"
 
     private readonly _bindings: DeepFilterBindings
@@ -49,7 +44,7 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
     private _lookahead = 0
     private _disposed = false
 
-    constructor(config: DeepFilterRuntimeConfig, wasmBinary?: ArrayBuffer) {
+    constructor(config: ResolvedDeepFilterConfig, wasmBinary?: ArrayBuffer) {
         super(config)
 
         if (wasmBinary) {
@@ -85,7 +80,7 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
         return undefined
     }
 
-    updateConfig(config: DeepFilterRuntimeConfig): void {
+    updateConfig(config: ResolvedDeepFilterConfig): void {
         this._config = { ...config }
         this._bindings.df_set_atten_lim(this._state, config.attenLimDb)
         this._bindings.df_set_post_filter_beta(this._state, config.postFilterBeta)
@@ -101,7 +96,7 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
         }
     }
 
-    private _createState(config: DeepFilterRuntimeConfig): void {
+    private _createState(config: ResolvedDeepFilterConfig): void {
         if (this._state) {
             this._bindings.df_destroy(this._state)
             this._state = 0
@@ -109,9 +104,9 @@ export class DeepFilterModule extends DenoiseModule<DeepFilterRuntimeConfig> {
 
         this._state = this._bindings.df_create_default(
             config.attenLimDb,
-            config.minDbThresh ?? -15,
-            config.maxDbErbThresh ?? 35,
-            config.maxDbDfThresh ?? 35,
+            config.minDbThresh ?? DEFAULT_DF_MIN_DB_THRESH,
+            config.maxDbErbThresh ?? DEFAULT_DF_MAX_DB_ERB_THRESH,
+            config.maxDbDfThresh ?? DEFAULT_DF_MAX_DB_DF_THRESH,
         )
 
         if (!this._state) {

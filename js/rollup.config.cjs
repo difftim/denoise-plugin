@@ -32,6 +32,8 @@ module.exports = {
             useTsconfigDeclarationDir: true,
             clean: true,
         }),
-        terser(),
+        terser({
+            maxWorkers: 1,
+        }),
     ],
 }

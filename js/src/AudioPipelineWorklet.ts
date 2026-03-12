@@ -2,10 +2,10 @@ import type { DenoiseModuleId } from "./options"
 import type {
     LogMessage,
     MainToWorkletMessage,
-    WorkletRnnoiseConfigPayload,
     WorkletToMainMessage,
 } from "./shared/contracts"
 import { resolveDenoiseModule } from "./shared/normalize"
+import { collectTransferBuffers } from "./shared/transfer"
 import { Float32ArrayPool } from "./worklet/Float32ArrayPool"
 import { MonoRingBuffer } from "./worklet/MonoRingBuffer"
 import type { WorkerToWorkletMessage, WorkletToWorkerMessage } from "./shared/worker-contracts"
@@ -55,9 +55,9 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
         if (!inputMono || !outputMono) return true
 
         for (let o = 0; o < outputs.length; o++) {
-            const output = outputs[o];
+            const output = outputs[o]
             for (let ch = 0; ch < output.length; ch++) {
-                output[ch].fill(0);
+                output[ch].fill(0)
             }
         }
         this._inputQueue.push(inputMono)
@@ -97,17 +97,18 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
             this._messageChain = this._messageChain
                 .then(() => this._dispatch(payload))
                 .catch((error) => {
-                    this._respondError(payload?.requestId, payload?.message ?? "UNKNOWN", error)
+                    this._respondError(payload?.requestId, payload?.type ?? "UNKNOWN", error)
                 })
         }
     }
 
     private async _dispatch(payload: MainToWorkletMessage): Promise<void> {
-        if (!payload?.message) return
+        if (!payload?.type) return
 
         const t0 = this._nowMs()
+        const commandType = payload.type
 
-        switch (payload.message) {
+        switch (commandType) {
             case "INIT_PIPELINE":
                 this._initPipeline(payload)
                 break
@@ -123,29 +124,25 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
             case "DESTROY":
                 this._destroy()
                 break
-            default:
-                throw new Error(
-                    `Unknown command: ${String((payload as { message: string }).message)}`,
-                )
         }
 
-        this._logInfo(`${payload.message} dispatch`, {
+        this._logInfo(`${commandType} dispatch`, {
             elapsed: `${(this._nowMs() - t0).toFixed(2)}ms`,
         })
-        this._respondOk(payload.requestId, payload.message)
+        this._respondOk(payload.requestId, commandType)
     }
 
     // ── Pipeline lifecycle ──────────────────────────────────────────
 
     private _initPipeline(
-        payload: Extract<MainToWorkletMessage, { message: "INIT_PIPELINE" }>,
+        payload: Extract<MainToWorkletMessage, { type: "INIT_PIPELINE" }>,
     ): void {
         this._debugLogs = payload.debugLogs ?? this._debugLogs
         this._currentModuleId = resolveDenoiseModule(payload.stages?.denoise)
         this._batchFrames = Math.max(1, payload.batchFrames ?? DEFAULT_BATCH_FRAMES)
 
         this._vadLogIntervalMs =
-            payload.moduleConfigs?.rnnoise?.bufferOverflowMs ?? DEFAULT_VAD_LOG_INTERVAL_MS
+            payload.moduleConfigs?.rnnoise?.vadLogIntervalMs ?? DEFAULT_VAD_LOG_INTERVAL_MS
         this._vadLogsEnabled = payload.moduleConfigs?.rnnoise?.vadLogs ?? false
 
         if (payload.workerPort) {
@@ -200,23 +197,13 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
             ? this._pendingRecycles.splice(0)
             : undefined
 
-        const transfer: ArrayBuffer[] = []
-        for (let i = 0; i < inputBuffers.length; i++) {
-            transfer.push(inputBuffers[i].buffer as ArrayBuffer)
-        }
-        if (recycles) {
-            for (let i = 0; i < recycles.length; i++) {
-                transfer.push(recycles[i].buffer as ArrayBuffer)
-            }
-        }
-
         this._workerPort!.postMessage(
             {
                 type: "PROCESS_FRAME_BATCH",
                 inputBuffers,
                 recycleBuffers: recycles,
             } satisfies WorkletToWorkerMessage,
-            transfer,
+            collectTransferBuffers(inputBuffers, recycles),
         )
     }
 
@@ -287,7 +274,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     }
 
     private _handleSetStageModule(
-        payload: Extract<MainToWorkletMessage, { message: "SET_STAGE_MODULE" }>,
+        payload: Extract<MainToWorkletMessage, { type: "SET_STAGE_MODULE" }>,
     ): void {
         if (payload.stage !== "denoise") {
             throw new Error(`Unsupported stage: ${payload.stage}`)
@@ -304,19 +291,25 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     }
 
     private _handleSetModuleConfig(
-        payload: Extract<MainToWorkletMessage, { message: "SET_MODULE_CONFIG" }>,
+        payload: Extract<MainToWorkletMessage, { type: "SET_MODULE_CONFIG" }>,
     ): void {
         if (payload.moduleId === "rnnoise") {
-            const rnConfig = payload.config as WorkletRnnoiseConfigPayload
-            if (rnConfig?.bufferOverflowMs) {
-                this._vadLogIntervalMs = rnConfig.bufferOverflowMs
+            if (payload.config.vadLogIntervalMs !== undefined) {
+                this._vadLogIntervalMs = payload.config.vadLogIntervalMs
             }
+
+            this._workerPort?.postMessage({
+                type: "SET_MODULE_CONFIG",
+                moduleId: "rnnoise",
+                config: payload.config,
+            } satisfies WorkletToWorkerMessage)
+            return
         }
 
         this._workerPort?.postMessage({
-            type: "SET_CONFIG",
-            moduleId: payload.moduleId,
-            config: payload.config as Record<string, unknown>,
+            type: "SET_MODULE_CONFIG",
+            moduleId: "deepfilternet",
+            config: payload.config,
         } satisfies WorkletToWorkerMessage)
     }
 
@@ -343,14 +336,14 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     private _respondOk(requestId: number | undefined, command: string): void {
         if (requestId === undefined) return
 
-        const payload: WorkletToMainMessage = { message: "COMMAND_OK", requestId, command }
+        const payload: WorkletToMainMessage = { type: "COMMAND_OK", requestId, command }
         this.port.postMessage(payload)
     }
 
     private _respondError(requestId: number | undefined, command: string, error: unknown): void {
         const errorMsg = error instanceof Error ? error.message : String(error)
         const payload: WorkletToMainMessage = {
-            message: "COMMAND_ERROR",
+            type: "COMMAND_ERROR",
             requestId,
             command,
             error: errorMsg,
@@ -389,7 +382,7 @@ class AudioPipelineWorklet extends AudioWorkletProcessor {
     private static readonly _LOG_TAG = "[AudioPipeline:Worklet]"
 
     private _postLog(level: "info" | "error", tag: string, text: string, data?: unknown): void {
-        const payload: LogMessage = { message: "LOG", level, tag, text, data }
+        const payload: LogMessage = { type: "LOG", level, tag, text, data }
         try {
             this.port.postMessage(payload)
         } catch {

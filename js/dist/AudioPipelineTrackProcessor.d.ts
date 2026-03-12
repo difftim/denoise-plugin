@@ -3,7 +3,6 @@ import type { AudioProcessorOptions, Room, TrackProcessor } from "livekit-client
 import type { AudioPipelineOptions, DeepFilterModuleConfig, DenoiseModuleId, PipelineStage, RnnoiseModuleConfig } from "./options";
 export declare class AudioPipelineTrackProcessor implements TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> {
     private static readonly _loadedContexts;
-    private static readonly _loadedWorkletUrls;
     readonly name = "audio-pipeline-filter";
     processedTrack?: MediaStreamTrack | undefined;
     private _audioOpts?;
@@ -12,8 +11,7 @@ export declare class AudioPipelineTrackProcessor implements TrackProcessor<Track
     private _worker?;
     private _enabled;
     private _options;
-    private _nextRequestId;
-    private _pendingCommands;
+    private readonly _commandTransport;
     private _operationQueue;
     constructor(options: AudioPipelineOptions);
     static isSupported(): boolean;
@@ -33,15 +31,12 @@ export declare class AudioPipelineTrackProcessor implements TrackProcessor<Track
     private _ensureWorkletLoaded;
     private _waitForWorkerInit;
     private _closeInternal;
-    private _fetchWasmBinaries;
-    private _fetchBinary;
     private readonly _handleRuntimeMessage;
     private _handleLog;
+    private _handleCommandError;
     private _runSerial;
+    private _createModuleConfigs;
     private _sendCommand;
-    private _resolvePending;
-    private _rejectPending;
-    private _rejectAllPendingCommands;
     private static readonly _LOG_TAG;
     private _debug;
 }

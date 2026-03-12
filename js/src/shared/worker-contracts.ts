@@ -1,5 +1,9 @@
 import type { DenoiseModuleId } from "../options"
-import type { WasmBinaries, WorkletModuleConfigPayloadMap } from "./contracts"
+import type { LogMessage, WasmBinaries, WorkletModuleConfigPayloadMap } from "./contracts"
+import type {
+    ResolvedDeepFilterConfig,
+    ResolvedRnnoiseModuleConfig,
+} from "./normalize"
 
 // ── Worklet → Worker ────────────────────────────────────────────
 
@@ -22,11 +26,17 @@ export interface WorkerSetModuleMessage {
     moduleId: DenoiseModuleId
 }
 
-export interface WorkerSetConfigMessage {
-    type: "SET_CONFIG"
-    moduleId: DenoiseModuleId
-    config: Record<string, unknown>
-}
+export type WorkerSetModuleConfigMessage =
+    | {
+        type: "SET_MODULE_CONFIG"
+        moduleId: "rnnoise"
+        config: ResolvedRnnoiseModuleConfig
+    }
+    | {
+        type: "SET_MODULE_CONFIG"
+        moduleId: "deepfilternet"
+        config: ResolvedDeepFilterConfig
+    }
 
 export interface WorkerSetEnabledMessage {
     type: "SET_ENABLED"
@@ -41,7 +51,7 @@ export type WorkletToWorkerMessage =
     | WorkerInitMessage
     | WorkerProcessFrameBatchMessage
     | WorkerSetModuleMessage
-    | WorkerSetConfigMessage
+    | WorkerSetModuleConfigMessage
     | WorkerSetEnabledMessage
     | WorkerDestroyMessage
 
@@ -71,17 +81,9 @@ export interface WorkerErrorMessage {
     error: string
 }
 
-export interface WorkerLogMessage {
-    type: "LOG"
-    level: "info" | "error"
-    tag: string
-    text: string
-    data?: unknown
-}
-
 export type WorkerToWorkletMessage =
     | WorkerInitOkMessage
     | WorkerFrameResultBatchMessage
     | WorkerModuleChangedMessage
     | WorkerErrorMessage
-    | WorkerLogMessage
+    | LogMessage

@@ -8,9 +8,9 @@ export declare const DEFAULT_DF_MAX_DB_ERB_THRESH = 35;
 export declare const DEFAULT_DF_MAX_DB_DF_THRESH = 35;
 export interface ResolvedRnnoiseModuleConfig {
     vadLogs: boolean;
-    bufferOverflowMs: number;
+    vadLogIntervalMs: number;
 }
-export interface ResolvedDeepFilterModuleConfig {
+export interface ResolvedDeepFilterConfig {
     attenLimDb: number;
     postFilterBeta: number;
     minDbThresh: number;
@@ -34,7 +34,7 @@ export interface ResolvedAudioPipelineOptions {
     };
     moduleConfigs: {
         rnnoise: ResolvedRnnoiseModuleConfig;
-        deepfilternet: ResolvedDeepFilterModuleConfig;
+        deepfilternet: ResolvedDeepFilterConfig;
     };
 }
 export declare function resolveDenoiseModule(moduleId?: DenoiseModuleId): DenoiseModuleId;
@@ -42,23 +42,8 @@ export declare function resolveDeepFilterAttenLimDb(value?: number): number;
 export declare function resolveDeepFilterPostFilterBeta(value?: number): number;
 export declare function normalizeRnnoiseConfig(config?: RnnoiseModuleConfig): ResolvedRnnoiseModuleConfig;
 export declare function mergeRnnoiseConfig(base: ResolvedRnnoiseModuleConfig, patch?: RnnoiseModuleConfig): ResolvedRnnoiseModuleConfig;
-export declare function normalizeDeepFilterConfig(config?: DeepFilterModuleConfig): ResolvedDeepFilterModuleConfig;
-export declare function mergeDeepFilterConfig(base: ResolvedDeepFilterModuleConfig, patch?: DeepFilterModuleConfig): ResolvedDeepFilterModuleConfig;
-export interface WorkletDeepFilterState {
-    attenLimDb: number;
-    postFilterBeta: number;
-    minDbThresh: number;
-    maxDbErbThresh: number;
-    maxDbDfThresh: number;
-}
-export declare function defaultWorkletDeepFilterState(): WorkletDeepFilterState;
-export declare function mergeWorkletDeepFilterState(base: WorkletDeepFilterState, patch?: {
-    attenLimDb?: number;
-    postFilterBeta?: number;
-    minDbThresh?: number;
-    maxDbErbThresh?: number;
-    maxDbDfThresh?: number;
-}): WorkletDeepFilterState;
+export declare function normalizeDeepFilterConfig(config?: DeepFilterModuleConfig): ResolvedDeepFilterConfig;
+export declare function mergeDeepFilterConfig(base: ResolvedDeepFilterConfig, patch?: DeepFilterModuleConfig): ResolvedDeepFilterConfig;
 export declare const DEFAULT_WORKER_FILENAME = "AudioPipelineWorker.js";
 export declare function resolveWorkerUrl(workletUrl: string, workerUrl?: string): string;
 export declare function normalizeAudioPipelineOptions(options: AudioPipelineOptions): ResolvedAudioPipelineOptions;

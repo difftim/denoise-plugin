@@ -2,7 +2,7 @@ export type PipelineStage = "denoise";
 export type DenoiseModuleId = "rnnoise" | "deepfilternet";
 export interface RnnoiseModuleConfig {
     vadLogs?: boolean;
-    bufferOverflowMs?: number;
+    vadLogIntervalMs?: number;
 }
 export interface DeepFilterModuleConfig {
     attenLimDb?: number;

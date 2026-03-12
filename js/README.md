@@ -12,7 +12,7 @@
 
 - DeepFilter wasm source package: `DeepFilterNet/libDF/pkg/df.js` + `df_bg.wasm`.
 - Artifact generator: `node ./scripts/build-deepfilter-artifacts.mjs`.
-- Generated files: `src/dist/deepfilter-bindgen.js`, `src/dist/deepfilter-wasm-base64.js`, `src/dist/deepfilter-sync.js`.
+- Generated files: `src/dist/deepfilter-bindgen.js`, `src/dist/rnnoise-sync.js`, `dist/deepfilter.wasm`.
 - `build:js` runs artifact generation first, then bundles worklet + library outputs.
 
 ## Example
@@ -28,7 +28,7 @@ const processor = new AudioPipelineTrackProcessor({
     moduleConfigs: {
         rnnoise: {
             vadLogs: true,
-            bufferOverflowMs: 1000,
+            vadLogIntervalMs: 1000,
         },
         deepfilternet: {
             attenLimDb: 100,
@@ -37,7 +37,7 @@ const processor = new AudioPipelineTrackProcessor({
     },
 })
 
-await processor.setModuleConfig("rnnoise", { vadLogs: true, bufferOverflowMs: 800 })
+await processor.setModuleConfig("rnnoise", { vadLogs: true, vadLogIntervalMs: 800 })
 await processor.setModuleConfig("deepfilternet", { attenLimDb: 30, postFilterBeta: 0.02 })
 await processor.setStageModule("denoise", "deepfilternet")
 await processor.setStageModule("denoise", "rnnoise")
@@ -50,7 +50,7 @@ await processor.setStageModule("denoise", "rnnoise")
 - `setStageModule("denoise", ...)` switches the active denoise module in-place (rnnoise ↔ deepfilternet). Only the already-loaded active module is used; no extra loading.
 - `setModuleConfig("deepfilternet", ...)` after init only updates parameters (`attenLimDb`, `postFilterBeta`). DeepFilter uses the **built-in model only** (no custom model loading).
 - `setModuleConfig("rnnoise", ...)` updates rnnoise-only config.
-- `vadLogs` and `bufferOverflowMs` are `rnnoise`-only configs.
+- `vadLogs` and `vadLogIntervalMs` are `rnnoise`-only configs.
   - They are ignored by `deepfilternet`.
   - Updating rnnoise config while deepfilter is active is cached and applied when switching back to rnnoise.
 - Input audio must be **48 kHz**; the pipeline does not perform sample-rate conversion.

@@ -1,6 +1,6 @@
 import createRNNWasmModuleSync from "../../dist/rnnoise-sync.js"
 import type { ResolvedRnnoiseModuleConfig } from "../../shared/normalize"
-import { DenoiseModule } from "./DenoiseModule"
+import { AudioProcessingModule } from "./AudioProcessingModule"
 
 const RNNOISE_FRAME = 480
 const RNNOISE_SCALE = 32768
@@ -13,7 +13,7 @@ interface IRnnoiseModule extends EmscriptenModule {
     _rnnoise_process_frame: (context: number, output: number, input: number) => number
 }
 
-export class RnnoiseModule extends DenoiseModule<ResolvedRnnoiseModuleConfig> {
+export class RnnoiseModule extends AudioProcessingModule<ResolvedRnnoiseModuleConfig> {
     readonly moduleId = "rnnoise"
     readonly frameLength = RNNOISE_FRAME
 

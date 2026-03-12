@@ -1,22 +1,9 @@
-import type { DenoiseModuleId, PipelineStage, RnnoiseModuleConfig } from "../options";
+import type { DenoiseModuleId, PipelineStage } from "../options";
+import type { ResolvedDeepFilterConfig, ResolvedRnnoiseModuleConfig } from "./normalize";
 export declare const COMMAND_TIMEOUT_MS = 10000;
-export declare const REQUIRED_SAMPLE_RATE = 48000;
-export interface WorkletRnnoiseConfigPayload extends RnnoiseModuleConfig {
-}
-export interface WorkletDeepFilterConfigPayload {
-    attenLimDb?: number;
-    postFilterBeta?: number;
-    /** Used at init only (default -15). */
-    minDbThresh?: number;
-    /** Used at init only (default 35). */
-    maxDbErbThresh?: number;
-    /** Used at init only (default 35). */
-    maxDbDfThresh?: number;
-}
-export type WorkletModuleConfigPayload = WorkletRnnoiseConfigPayload | WorkletDeepFilterConfigPayload;
 export interface WorkletModuleConfigPayloadMap {
-    rnnoise?: WorkletRnnoiseConfigPayload;
-    deepfilternet?: WorkletDeepFilterConfigPayload;
+    rnnoise?: ResolvedRnnoiseModuleConfig;
+    deepfilternet?: ResolvedDeepFilterConfig;
 }
 interface BaseMainToWorkletMessage {
     requestId?: number;
@@ -26,7 +13,7 @@ export interface WasmBinaries {
     deepfilterWasm?: ArrayBuffer;
 }
 export interface InitPipelineMessage extends BaseMainToWorkletMessage {
-    message: "INIT_PIPELINE";
+    type: "INIT_PIPELINE";
     enable?: boolean;
     debugLogs?: boolean;
     workerPort?: MessagePort;
@@ -38,36 +25,40 @@ export interface InitPipelineMessage extends BaseMainToWorkletMessage {
     moduleConfigs?: WorkletModuleConfigPayloadMap;
 }
 export interface SetEnabledMessage extends BaseMainToWorkletMessage {
-    message: "SET_ENABLED";
+    type: "SET_ENABLED";
     enable: boolean;
 }
 export interface SetStageModuleMessage extends BaseMainToWorkletMessage {
-    message: "SET_STAGE_MODULE";
+    type: "SET_STAGE_MODULE";
     stage: PipelineStage;
     moduleId: DenoiseModuleId;
 }
-export interface SetModuleConfigMessage extends BaseMainToWorkletMessage {
-    message: "SET_MODULE_CONFIG";
-    moduleId: DenoiseModuleId;
-    config: WorkletModuleConfigPayload;
-}
+export type SetModuleConfigMessage = (BaseMainToWorkletMessage & {
+    type: "SET_MODULE_CONFIG";
+    moduleId: "rnnoise";
+    config: ResolvedRnnoiseModuleConfig;
+}) | (BaseMainToWorkletMessage & {
+    type: "SET_MODULE_CONFIG";
+    moduleId: "deepfilternet";
+    config: ResolvedDeepFilterConfig;
+});
 export interface DestroyMessage extends BaseMainToWorkletMessage {
-    message: "DESTROY";
+    type: "DESTROY";
 }
 export type MainToWorkletMessage = InitPipelineMessage | SetEnabledMessage | SetStageModuleMessage | SetModuleConfigMessage | DestroyMessage;
 export interface CommandOkMessage {
-    message: "COMMAND_OK";
+    type: "COMMAND_OK";
     requestId?: number;
     command?: string;
 }
 export interface CommandErrorMessage {
-    message: "COMMAND_ERROR";
+    type: "COMMAND_ERROR";
     requestId?: number;
     command?: string;
     error?: string;
 }
 export interface LogMessage {
-    message: "LOG";
+    type: "LOG";
     level: "info" | "error";
     tag: string;
     text: string;
