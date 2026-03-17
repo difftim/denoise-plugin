@@ -25,6 +25,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "denoise-filter"
+rootProject.name = "audio-pipeline"
 include(":app")
-include(":denoise-filter")
+include(":audio-pipeline")

@@ -1,8 +1,6 @@
 {
     global:
-        Java_com_github_TempTalkOrg_denoise_1filter_DenoisePluginAudioProcessor_create;
-        Java_com_github_TempTalkOrg_denoise_1filter_DenoisePluginAudioProcessor_destroy;
-        Java_com_github_TempTalkOrg_denoise_1filter_DenoisePluginAudioProcessor_processFrame;
+        Java_com_github_TempTalkOrg_audio_1pipeline_AudioPipelineProcessor_*;
     local:
         *;
 };

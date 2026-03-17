@@ -23,5 +23,7 @@ node_modules
 .DS_Store
 .npmrc
 libs
+libs_df
+build_cmake_*
 .codex
 denoise-plugin-swift

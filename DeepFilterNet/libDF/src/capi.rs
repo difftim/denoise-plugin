@@ -103,6 +103,33 @@ pub unsafe extern "C" fn df_create(
     Box::into_raw(df.boxed())
 }
 
+/// Create a DeepFilterNet Model with the built-in default model.
+///
+/// Args:
+///     - atten_lim: Attenuation limit in dB.
+///     - min_db_thresh: Minimum dB threshold. Below this, treat as noise only.
+///     - max_db_erb_thresh: Maximum dB threshold for ERB stage. Above this, skip processing.
+///     - max_db_df_thresh: Maximum dB threshold for DF stage. Above this, skip DF stage.
+///
+/// Returns:
+///     - DF state doing the full processing: stft, DNN noise reduction, istft.
+#[no_mangle]
+pub unsafe extern "C" fn df_create_default(
+    atten_lim: f32,
+    min_db_thresh: f32,
+    max_db_erb_thresh: f32,
+    max_db_df_thresh: f32,
+) -> *mut DFState {
+    let mut r_params = RuntimeParams::default_with_ch(1);
+    r_params = r_params
+        .with_atten_lim(atten_lim)
+        .with_thresholds(min_db_thresh, max_db_erb_thresh, max_db_df_thresh);
+    r_params = r_params.with_post_filter(0.0f32);
+    let df_params = DfParams::default();
+    let m = DfTract::new(df_params, &r_params).expect("Could not initialize DeepFilter runtime.");
+    Box::into_raw(Box::new(DFState { m, logger: None }))
+}
+
 /// Get DeepFilterNet frame size in samples.
 #[no_mangle]
 pub unsafe extern "C" fn df_get_frame_length(st: *mut DFState) -> usize {
